@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "laplace-inducing-points"
+version = "0.0.1"
+authors = [
+  { name="Niels Raunkjær Holm", email="s204503@dtu.dk"}
+]
+description = "M.Sc. Thesis"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/nrholm1/Laplace-Inducing-Points"
+Issues = "https://github.com/nrholm1/Laplace-Inducing-Points/issues"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.ruff]
+line-length = 120
