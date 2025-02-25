@@ -16,7 +16,7 @@ class Colors(str, Enum):
     darkgray = '#333'
 
 scatterp = lambda x,y,*args, color=Colors.paleblue, **kwargs: plt.scatter(x, y, edgecolor=Colors.darkgray, color=color, *args, **kwargs)
-linep =    lambda x,y,*args, color=Colors.paleblue, **kwargs: plt.plot(x, y, color=color, linewidth=3, *args, **kwargs)
+linep    = lambda x,y,*args, color=Colors.paleblue, **kwargs: plt.plot(x, y, color=color, linewidth=3, *args, **kwargs)
 
 def plot_inducing_points_1D(ax, points, *args,
                             offsetp=0.1,
