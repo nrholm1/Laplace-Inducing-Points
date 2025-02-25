@@ -1,0 +1,11 @@
+map:
+  batch_size: 32
+  epochs_map: 2000
+  lr_map: 0.001
+  alpha: 1.0
+inducing:
+  m_induc: 16
+  epochs_induc: 100
+  lr_induc: 0.01
+  alpha: 1.0
+  mc_samples: 5

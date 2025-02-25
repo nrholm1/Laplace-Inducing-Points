@@ -234,21 +234,6 @@ def train_inducing_points(map_model_state, xinit,
     return x
 
 
-def create_dataset(dataset_name, n, key, noise):
-    """
-    Creates a dataset of size n according to dataset_name, 
-    optionally with added noise. 
-    Returns (x, y).
-    """
-    if dataset_name == 'xor':
-        x, y = xor_dataset(n, key, noise)
-    elif dataset_name == 'sine':
-        x, y = sine_wave_dataset(n, key, noise, split_in_middle=True)
-    else:
-        raise ValueError(f"Unknown dataset_name = {dataset_name}")
-    return x, y
-
-
 def save_array_checkpoint(array, ckpt_dir, name, step):
     """
     Save a JAX array (e.g. for inducing points) as a .npy file:
@@ -317,138 +302,120 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", type=str, default="full_pipeline",
                         choices=["train_map", "train_inducing", "visualize", "full_pipeline"],
-                        help="Which phase of the pipeline to run: train_map, train_inducing, etc.")
-    parser.add_argument("--dataset", type=str, default="sine",
-                        help="Which dataset to use: 'xor' or 'sine'")
-    parser.add_argument("--n_samples", metavar='N', type=int, default=128,
-                        help="Number of data samples to generate.")
-    parser.add_argument("--noise", type=float, default=0.5,
-                        help="Noise level for synthetic data.")
-    parser.add_argument("--numh", type=int, default=32,
-                        help="Number of hidden units.")
-    parser.add_argument("--numl", type=int, default=2,
-                        help="Number of hidden layers.")
-    parser.add_argument("--numc", type=int, default=2,
-                        help="Number of output classes (for classification).")
-    parser.add_argument("--seed_data", type=int, default=42,
-                        help="Random seed for data generation.")
-    parser.add_argument("--seed_model", type=int, default=1337,
-                        help="Random seed for model init.")
-    parser.add_argument("--seed_induc", type=int, default=314159265,
-                        help="Random seed for inducing points.")
-    parser.add_argument("--alpha", type=float, default=1.0,
-                        help="Prior precision or noise precision, depends on usage.")
-    parser.add_argument("--lr_map", type=float, default=1e-3,
-                        help="Learning rate for MAP training.")
-    parser.add_argument("--lr_induc", type=float, default=1e-2,
-                        help="Learning rate for Inducing Point training.")
-    parser.add_argument("--batch_size", type=int, default=32,
-                        help="Batch size for training.")
-    parser.add_argument("--epochs_map", type=int, default=2000,
-                        help="Number of epochs for MAP training.")
-    parser.add_argument("--m_induc", metavar='m', type=int, default=16,
-                        help="Number of inducing points.")
-    parser.add_argument("--epochs_induc", type=int, default=500,
-                        help="Number of steps for inducing point optimization.")
+                        help="Which phase(s) to run.")
+    parser.add_argument("--datafile", type=str, required=True,
+                        help="Path to an .npz file containing x,y arrays.")
+    parser.add_argument("--model_config", type=str, required=True,
+                        help="Path to a YAML file with model hyperparams (e.g. config/toyregressor.yml).")
+    parser.add_argument("--optimization_config", type=str, required=True,
+                        help="Path to a YAML file with all optimization hyperparams (for MAP and inducing).")
     parser.add_argument("--ckpt_map", type=str, default="checkpoint/map/",
                         help="Directory for loading/saving the MAP model checkpoint.")
     parser.add_argument("--ckpt_induc", type=str, default="checkpoint/ind/",
                         help="Directory for loading/saving the inducing points checkpoint.")
     args = parser.parse_args()
-    
+
     # Print selected options
     print('# Options')
     for key, value in sorted(vars(args).items()):
         print(key, '=', value)
         
-    # Step A: Create or load data
-    rng_data = jax.random.PRNGKey(args.seed_data)
-    x, y = create_dataset(args.dataset, args.n_samples, rng_data, args.noise)
-    
-    # 90/10 train/test split
-    trainsplit = int(0.9 * args.n_samples)
+    # 1) Load data
+    if not os.path.exists(args.datafile):
+        raise FileNotFoundError(f"Data file not found: {args.datafile}")
+    data_npz = np.load(args.datafile)
+    x = jax.device_put(data_npz["x"])
+    y = jax.device_put(data_npz["y"])
+    n_samples = x.shape[0]
+    print(f"[INFO] Loaded dataset from {args.datafile} with {n_samples} samples.")
+
+    # 2) Create train/test split
+    trainsplit = int(0.9 * n_samples)
     xtrain, ytrain = x[:trainsplit], y[:trainsplit]
     xtest,  ytest  = x[trainsplit:], y[trainsplit:]
 
-    # Step B: Build model and visualize data
-    if args.dataset == 'sine':
-        scatterp(xtrain,ytrain,color=Colors.paleblue, label='Train data')
-        scatterp(xtest,ytest,color=Colors.yellow, zorder=2, label='Test data')
-        t = jnp.linspace(-4,3,250)
-        f = sine_wave_fun
-        if f is not None:
-            linep(t, f(t), zorder=3, color=Colors.darkorange, label='$f$ (latent fun)')
-        plt.legend()
-        plt.savefig("fig/sinefun.pdf")
-        
-        model = SimpleRegressor(numh=args.numh, numl=args.numl)
-    else:
-        # XOR or any other classification
-        model = SimpleClassifier(numh=args.numh, numl=args.numl, numc=args.numc)
+    # 3) Load model config
+    model_cfg = load_yaml(args.model_config)
+    model_type = model_cfg.get("model_type", "regressor")  # 'regressor' or 'classifier'
+    num_h = model_cfg["num_h"]
+    num_l = model_cfg["num_l"]
+    num_c = model_cfg.get("num_c", 2)
+    model_seed = model_cfg["rng_seed"]
 
-    # Initialize model with a random input
-    rng_model = jax.random.PRNGKey(args.seed_model)
-    rng_model, inp_rng, init_rng = jax.random.split(rng_model, 3)
-    dummy_inp = jax.random.normal(inp_rng, shape=(args.numh, 1))  # or shape=(1, input_dim)
-    params = model.init(init_rng, dummy_inp)
+    if model_type == "regressor":
+        model = SimpleRegressor(numh=num_h, numl=num_l)
+    elif model_type == "classifier":
+        model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
+
+    rng_model = jax.random.PRNGKey(model_seed)
+    dummy_inp = jax.random.normal(rng_model, shape=(num_h, 1))
+    params = model.init(rng_model, dummy_inp)
 
     print("== Model Summary ==")
     print_summary(params)
-    
-    # Create training state for MAP
-    optimizer_map = optax.adam(learning_rate=args.lr_map)
+
+    # 4) Load optimization config (combined for MAP and inducing)
+    opt_cfg = load_yaml(args.optimization_config)
+    map_cfg = opt_cfg["map"]
+    induc_cfg = opt_cfg["inducing"]
+
+    batch_size = map_cfg["batch_size"]
+    epochs_map = map_cfg["epochs_map"]
+    lr_map = map_cfg["lr_map"]
+    alpha_map = map_cfg["alpha"]
+
+    m_induc = induc_cfg["m_induc"]
+    epochs_induc = induc_cfg["epochs_induc"]
+    lr_induc = induc_cfg["lr_induc"]
+    alpha_induc = induc_cfg["alpha"]
+    mc_samples = induc_cfg["mc_samples"]
+
+    # 5) Build train_state for MAP
+    optimizer_map = optax.adam(lr_map)
     model_state = train_state.TrainState.create(
         apply_fn=model.apply,
         params=params,
         tx=optimizer_map
     )
+    map_ckpt_prefix = f"map_{model_type}"
 
-    # Step C: (Optionally) Train model to get MAP solution
-    map_ckpt_prefix = f"map_{args.dataset}"
-    
+    # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
         train_dataset = JAXDataset(xtrain, ytrain)
         test_dataset  = JAXDataset(xtest,  ytest)
-        train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, args.batch_size)
+        train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, batch_size)
         
         map_model_state = train_model(
             model_state,
             train_loader,
             test_loader,
             train_step=train_map_step,
-            prior_std=args.alpha**(-0.5),
-            num_epochs=args.epochs_map
+            prior_std=alpha_map**(-0.5),
+            num_epochs=epochs_map
         )
-        # Save the MAP checkpoint
         save_checkpoint(
             train_state=map_model_state,
             ckpt_dir=args.ckpt_map,
             prefix=map_ckpt_prefix,
-            step=args.epochs_map
+            step=epochs_map
         )
         if args.mode == "train_map":
-            print("Done!")
-            return # ! quit main method
-        
+            print("[DONE] MAP training only.")
+            return
     else:
-        # If not training, we assume we load from checkpoint
         map_model_state = load_checkpoint(
             ckpt_dir=args.ckpt_map,
             prefix=map_ckpt_prefix,
             target=model_state
         )
 
-    # Step D: Inducing Points
-    indu_ckpt_name = f"ind_{args.dataset}"
-    
-    # Initial inducing points
-    rng_inducing = jax.random.PRNGKey(args.seed_induc)
-    xinit = jax.random.uniform(rng_inducing, shape=(args.m_induc,)) * 7.0 - 4.0
-    
-    if args.mode in ["train_inducing", "full_pipeline"]:
+    # =========== PART B: Inducing Points ===========
+    indu_ckpt_name = f"ind_{model_type}"
+    rng_inducing = jax.random.PRNGKey(314159265)
+    xinit = jax.random.uniform(rng_inducing, shape=(m_induc,)) * 7.0 - 4.0
 
-        # Train (optimize) the inducing points
-        xoptimizer = optax.adam(args.lr_induc)
+    if args.mode in ["train_inducing", "full_pipeline"]:
+        xoptimizer = optax.adam(lr_induc)
         full_dataset = (xtrain, ytrain)
         
         xinduc = train_inducing_points(
@@ -457,53 +424,54 @@ def main():
             xoptimizer,
             full_dataset=full_dataset,
             rng=rng_inducing,
-            num_mc_samples=10,
-            alpha=args.alpha,
-            num_steps=args.epochs_induc
+            num_mc_samples=mc_samples,
+            alpha=alpha_induc,
+            num_steps=epochs_induc
         )
 
-        # Save the inducing points as an array
         save_array_checkpoint(
             array=xinduc,
             ckpt_dir=args.ckpt_induc,
             name=indu_ckpt_name,
-            step=args.epochs_induc
+            step=epochs_induc
         )
+        if args.mode == "train_inducing":
+            print("[DONE] Inducing training only.")
+            return
     else:
         xinduc = load_array_checkpoint(
             ckpt_dir=args.ckpt_induc,
             name=indu_ckpt_name,
-            step=args.epochs_induc
+            step=epochs_induc
         )
 
-    # Step E: Evaluate / Plot results
-    xlin = jnp.linspace(-4, 3, 100)[:,None]
-    postpreddist_full = predict_lla(map_model_state, xlin, 
-                                    xtrain,
-                                    prior_std=1.0)
+    # =========== PART C: Visualization ===========
+    if args.mode in ["visualize", "full_pipeline"]:
+        xlin = jnp.linspace(-4, 3, 100)[:, None]
+        postpreddist_full = predict_lla(
+            map_model_state, xlin, xtrain, prior_std=1.0
+        )
+        postpreddist_rand = predict_lla(
+            map_model_state, xlin, xinit, prior_std=1.0, full_set_size=xtrain.shape[0]
+        )
+        postpreddist_optimized = predict_lla(
+            map_model_state, xlin, xinduc, prior_std=1.0, full_set_size=xtrain.shape[0]
+        )
     
-    postpreddist_rand = predict_lla(map_model_state, xlin, 
-                                    xinit,
-                                    prior_std=1.0, full_set_size=xtrain.shape[0])
-
-    postpreddist_optimized = predict_lla(map_model_state, xlin, 
-                                         xinduc,
-                                         prior_std=1.0, full_set_size=xtrain.shape[0])
-    
-    fig, ax = plt.subplots(figsize=(8,5))
-    plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
-                   text="full", color='orange',zorder=5)
-    plot_cinterval(xlin.squeeze(), postpreddist_rand.mean(), postpreddist_rand.stddev(), 
-                   text="ind. init", color='red', zorder=3)
-    plot_cinterval(xlin.squeeze(), postpreddist_optimized.mean(), postpreddist_optimized.stddev(), 
-                   text="ind. optimized", color='green',zorder=4)
-    scatterp(xtest, ytest, color=Colors.yellow, zorder=2, label='Test data')
-    plot_inducing_points_1D(ax, xinduc, color='green', offsetp=0.00, zorder=3, label=None)
-    plot_inducing_points_1D(ax, xinit, color='red', offsetp=0.00, zorder=3, label=None)
-    plt.legend(loc='lower right')
-    plt.savefig("fig/pdist-full_vs_init_vs_optimized.pdf")
-
-    print("Done!")
+        fig, ax = plt.subplots(figsize=(8,5))
+        plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
+                       text="full", color='orange', zorder=5)
+        plot_cinterval(xlin.squeeze(), postpreddist_rand.mean(), postpreddist_rand.stddev(), 
+                       text="ind. init", color='red', zorder=3)
+        plot_cinterval(xlin.squeeze(), postpreddist_optimized.mean(), postpreddist_optimized.stddev(), 
+                       text="ind. optimized", color='green', zorder=4)
+        scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
+        plot_inducing_points_1D(ax, xinduc, color='green', offsetp=0.00, zorder=3, label=None)
+        plot_inducing_points_1D(ax, xinit, color='red', offsetp=0.00, zorder=3, label=None)
+        plt.legend(loc='lower right')
+        os.makedirs("fig", exist_ok=True)
+        plt.savefig("fig/pdist-full_vs_init_vs_optimized.pdf")
+        print("[DONE] Visualization complete.")
 
 if __name__ == "__main__":
     main()

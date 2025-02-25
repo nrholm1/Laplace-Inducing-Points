@@ -1,0 +1,4 @@
+num_h: 32
+num_l: 2
+model_type: "regressor"
+rng_seed: 1234

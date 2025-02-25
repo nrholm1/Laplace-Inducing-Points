@@ -1,10 +1,19 @@
 """
 Utility for creating or loading toy datasets.
+
+Example usage:
+  python toydata.py --dataset sine --n_samples 200 --noise 0.3 --split_in_middle \
+                    --seed 999 --out_file data/sine_dataset.npz
 """
 
+import argparse
+import os
 import jax
 import jax.numpy as jnp
+import numpy as np
 import torch.utils.data as data
+
+"""DATASET CLASSES AND UTILS"""
 
 class JAXDataset(data.Dataset):
     def __init__(self, x, y):
@@ -27,11 +36,11 @@ def jax_collate_fn(batch):
 def get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=jax_collate_fn):
     train_loader = data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     test_loader = data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    return train_loader,test_loader
+    return train_loader, test_loader
 
 
+"""SYNTHETIC DATASETS"""
 
-"""SYNTHETIC DATA"""
 sine_wave_fun = lambda x: jnp.sin(2 * x) + x * jnp.cos(5 * x)
 
 def sine_wave_dataset(n, key, noise=0.5, split_in_middle=False):
@@ -39,29 +48,82 @@ def sine_wave_dataset(n, key, noise=0.5, split_in_middle=False):
     if not split_in_middle:
         x = jax.random.uniform(key=datakey, minval=-3.0, maxval=3.0, shape=(n,)).reshape(-1, 1)
     else:
+        # Example of splitting the domain into two portions and merging them
         x1 = jax.random.uniform(key=datakey, minval=-4.0, maxval=-1.0, shape=(n,)).reshape(-1, 1)
         x2 = jax.random.uniform(key=datakey, minval=0.0, maxval=3.0, shape=(n,)).reshape(-1, 1)
-        x = jnp.concatenate([x1,x2],axis=0)
-        perm = jax.random.permutation(key, x.shape[0])
+        x = jnp.concatenate([x1,x2], axis=0)
+        perm = jax.random.permutation(datakey, x.shape[0])
         x = x[perm]
     signal = sine_wave_fun(x)
     y = signal + jax.random.normal(noisekey, shape=signal.shape) * noise
     return x, y
 
-
 def xor_dataset(n, key, noise=0.05):
-    zkey,noisekey = jax.random.split(key, 2)
+    zkey, noisekey = jax.random.split(key, 2)
     z = jax.random.uniform(key=zkey, shape=(n,2))
     x = (z > 0.5).astype(jnp.float32) * 2 - 1
     y = (x.prod(axis=1) == -1).astype(jnp.float32)
     x += noise * jax.random.normal(key=noisekey, shape=z.shape)
     return x, y
-    
-    
 
-
-"""DATASETS"""
 def data_ex5():
     data = jnp.load('data/data_exercise5.npz')
     x, y = data['X'], data['y']
     return x, y
+
+
+"""DATA FACTORY"""
+def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
+    """
+    Creates a dataset of size n according to dataset_name, 
+    optionally with added noise. Returns (x, y).
+    """
+    if dataset_name == 'xor':
+        x, y = xor_dataset(n, key, noise)
+    elif dataset_name == 'sine':
+        x, y = sine_wave_dataset(n, key, noise, split_in_middle=split_in_middle)
+    else:
+        raise ValueError(f"Unknown dataset_name = {dataset_name}")
+    return x, y
+
+
+################################################################################
+#                                MAIN
+################################################################################
+
+def main():
+    parser = argparse.ArgumentParser(description="Utility for creating synthetic toy datasets.")
+    parser.add_argument("--dataset", type=str, default="sine", choices=["sine", "xor"],
+                        help="Which dataset to create.")
+    parser.add_argument("--n_samples", type=int, default=128,
+                        help="Number of data samples to generate.")
+    parser.add_argument("--noise", type=float, default=0.5,
+                        help="Noise level for the dataset.")
+    parser.add_argument("--split_in_middle", action="store_true",
+                        help="If set, use the 'split' variant for the sine dataset.")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for data generation.")
+    parser.add_argument("--out_file", type=str, default=None,
+                        help="Where to save the resulting .npz file (contains x and y).")
+    args = parser.parse_args()
+
+    # 1) PRNG initialization
+    rng_data = jax.random.PRNGKey(args.seed)
+    
+    # 2) Create the dataset
+    x, y = create_dataset(
+        dataset_name=args.dataset,
+        n=args.n_samples,
+        key=rng_data,
+        noise=args.noise,
+        split_in_middle=args.split_in_middle
+    )
+    
+    # 3) Save as .npz
+    savename = args.out_file or f"data/{args.dataset}.npz"
+    os.makedirs(os.path.dirname(savename), exist_ok=True)
+    np.savez(savename, x=x, y=y)
+    print(f"Saved {args.dataset} data at {savename} with shape x={x.shape}, y={y.shape}")
+
+if __name__ == "__main__":
+    main()
