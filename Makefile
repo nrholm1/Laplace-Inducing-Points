@@ -38,11 +38,24 @@ datamain = src/toydata.py
 
 DEVICE = cpu
 
-full-pipeline-regr:
-	$(PYTHON_INTERPRETER) src/main.py full_pipeline \
-		--datafile data/sine.npz \
-		--model_config config/toyregressor.yml \
+DATASET = sine
+MODEL = toyregressor
+
+run:
+	$(PYTHON_INTERPRETER) src/main.py $(mode) \
+		--dataset $(DATASET) \
+		--model_config config/$(MODEL).yml \
 		--optimization_config config/optimization.yml
+
+
+train_map:
+	$(MAKE) run mode=train_map
+train_inducing:
+	$(MAKE) run mode=train_inducing
+full_pipeline:
+	$(MAKE) run mode=full_pipeline
+visualize:
+	$(MAKE) run mode=visualize
 
 data:
 	$(PYTHON_INTERPRETER) $(datamain) --dataset $(D) --n_samples $(N) --noise $(EPS) --seed $(SEED) $(ARGS)

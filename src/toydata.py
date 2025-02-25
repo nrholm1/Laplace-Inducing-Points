@@ -46,7 +46,7 @@ sine_wave_fun = lambda x: jnp.sin(2 * x) + x * jnp.cos(5 * x)
 def sine_wave_dataset(n, key, noise=0.5, split_in_middle=False):
     datakey, noisekey = jax.random.split(key, 2)
     if not split_in_middle:
-        x = jax.random.uniform(key=datakey, minval=-3.0, maxval=3.0, shape=(n,)).reshape(-1, 1)
+        x = jax.random.uniform(key=datakey, minval=-4.0, maxval=3.0, shape=(n,)).reshape(-1, 1)
     else:
         # Example of splitting the domain into two portions and merging them
         x1 = jax.random.uniform(key=datakey, minval=-4.0, maxval=-1.0, shape=(n,)).reshape(-1, 1)

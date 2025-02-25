@@ -16,11 +16,10 @@ from seaborn import set_style
 set_style('darkgrid')
 
 from toymodels import SimpleRegressor, SimpleClassifier, print_summary
-from toydata import JAXDataset, get_dataloaders, sine_wave_dataset, sine_wave_fun, data_ex5, xor_dataset
+from toydata import JAXDataset, get_dataloaders
 from nplot import Colors, linep, scatterp, plot_cinterval, plot_inducing_points_1D
 
 
-#%%
 def nll_fun(state, params, batch):
     inp,res = batch
     pred = state.apply_fn(params, inp)
@@ -61,7 +60,7 @@ def train_model(state, trainloader, testloader, train_step, *args, num_epochs=10
     for epoch in pbar:
         for batch in trainloader:
             state, loss = train_step(state, batch, *args, **kwargs)
-        if (epoch) % 25 == 0:
+        if (epoch) % 10 == 0:
             eloss = 0
             for batch in testloader:
                 eloss += eval_step(state, batch) # TODO make eval MAP step?
@@ -79,6 +78,7 @@ def compute_ggn(state, x, prior_std, full_set_size=None):
             return state.apply_fn(p, xi[None]).squeeze()
         return jax.jacobian(scalar_output)(flat_params)
 
+    # todo add hessian term for classification!
     Js = jax.vmap(per_datum_jacobian)(x)
     JtJ = jnp.einsum('ni,nj->ij', Js, Js)
     prior_precision = 1.0 / (prior_std**2)
@@ -86,7 +86,6 @@ def compute_ggn(state, x, prior_std, full_set_size=None):
     # rescaling weight if subsampled/inducing points
     N = x.shape[0]
     M = full_set_size or N
-    
     GGN = N/M * JtJ + prior_precision*jnp.eye(JtJ.shape[0])
     
     return GGN, flat_params, unravel_fn
@@ -158,21 +157,21 @@ def loglik_dataset(params, apply_fn, xdata, ydata, alpha):
     return -N/2 *jnp.log(twovar*jnp.pi) - 1/twovar * ((ydata-ypred)**2).sum()
 
 
-def var_loglik_fun(q, dataset, apply_fn, unravel_fn, rng, alpha, num_samples):
+def var_loglik_fun(q, dataset, apply_fn, unravel_fn, rng, alpha, num_mc_samples):
     """
     # ! using MC sample(s) of parameters
     """
     x,y = dataset
     mu,cov = q.mean(), q.covariance()
     log_sum = 0.0
-    for i in range(num_samples):
+    for i in range(num_mc_samples):
         rng_i = jax.random.fold_in(rng, i)  # make a fresh key
         theta_sample = sample_params(mu, cov, rng_i)
         theta_sample = unravel_fn(theta_sample)
         log_p_data = loglik_dataset(theta_sample, apply_fn, x, y, alpha) # todo don't use *all* data
         log_sum += log_p_data
     
-    return log_sum / num_samples
+    return log_sum / num_mc_samples
     
     
 def var_kl_fun(q, alpha):
@@ -192,7 +191,7 @@ def naive_objective(xind, dataset, state, alpha, rng, num_mc_samples, full_set_s
                       prior_std=alpha, full_set_size=full_set_size,
                       return_unravel_fn=True)
 
-    loglik_term = var_loglik_fun(q, dataset, state.apply_fn, unravel_fn, rng, alpha, num_samples=num_mc_samples)
+    loglik_term = var_loglik_fun(q, dataset, state.apply_fn, unravel_fn, rng, alpha, num_mc_samples=num_mc_samples)
     kl_term = var_kl_fun(q, alpha)
     reg_term = reg_coeff * jnp.sum(jnp.square(xind))
     return - (loglik_term-kl_term) + reg_term
@@ -206,7 +205,8 @@ def optimize_step(x, dataset, map_model_state, alpha,
     updates, new_opt_state = xoptimizer.update(grads, opt_state)
     new_x = optax.apply_updates(x, updates)
     return new_x, new_opt_state, loss
-# JIT optimize_step here, since the static_argnames is problematic in the decorator?
+
+# ? JIT optimize_step here, since the static_argnames is problematic in the decorator?
 optimize_step = jax.jit(optimize_step, static_argnames=['xoptimizer', 'num_mc_samples', 'full_set_size'])
 
 
@@ -303,7 +303,7 @@ def main():
     parser.add_argument("mode", type=str, default="full_pipeline",
                         choices=["train_map", "train_inducing", "visualize", "full_pipeline"],
                         help="Which phase(s) to run.")
-    parser.add_argument("--datafile", type=str, required=True,
+    parser.add_argument("--dataset", type=str, required=True,
                         help="Path to an .npz file containing x,y arrays.")
     parser.add_argument("--model_config", type=str, required=True,
                         help="Path to a YAML file with model hyperparams (e.g. config/toyregressor.yml).")
@@ -321,13 +321,14 @@ def main():
         print(key, '=', value)
         
     # 1) Load data
-    if not os.path.exists(args.datafile):
-        raise FileNotFoundError(f"Data file not found: {args.datafile}")
-    data_npz = np.load(args.datafile)
+    datafile = f"data/{args.dataset}.npz"
+    if not os.path.exists(datafile):
+        raise FileNotFoundError(f"Data file not found: {datafile}")
+    data_npz = np.load(datafile)
     x = jax.device_put(data_npz["x"])
     y = jax.device_put(data_npz["y"])
     n_samples = x.shape[0]
-    print(f"[INFO] Loaded dataset from {args.datafile} with {n_samples} samples.")
+    print(f"[INFO] Loaded dataset from {datafile} with {n_samples} samples.")
 
     # 2) Create train/test split
     trainsplit = int(0.9 * n_samples)
@@ -363,12 +364,14 @@ def main():
     epochs_map = map_cfg["epochs_map"]
     lr_map = map_cfg["lr_map"]
     alpha_map = map_cfg["alpha"]
+    seed_map = map_cfg["seed"]
 
     m_induc = induc_cfg["m_induc"]
     epochs_induc = induc_cfg["epochs_induc"]
     lr_induc = induc_cfg["lr_induc"]
     alpha_induc = induc_cfg["alpha"]
     mc_samples = induc_cfg["mc_samples"]
+    seed_inducing = induc_cfg["seed"]
 
     # 5) Build train_state for MAP
     optimizer_map = optax.adam(lr_map)
@@ -377,7 +380,7 @@ def main():
         params=params,
         tx=optimizer_map
     )
-    map_ckpt_prefix = f"map_{model_type}"
+    map_ckpt_prefix = f"map_{args.dataset}"
 
     # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
@@ -411,8 +414,9 @@ def main():
 
     # =========== PART B: Inducing Points ===========
     indu_ckpt_name = f"ind_{model_type}"
-    rng_inducing = jax.random.PRNGKey(314159265)
-    xinit = jax.random.uniform(rng_inducing, shape=(m_induc,)) * 7.0 - 4.0
+    rng_inducing = jax.random.PRNGKey(seed_inducing)
+    # xinit = jax.random.uniform(rng_inducing, shape=(m_induc,)) * 7.0 - 4.0
+    xinit = jnp.linspace(-4, 3, m_induc)
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         xoptimizer = optax.adam(lr_induc)

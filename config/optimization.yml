@@ -1,11 +1,13 @@
 map:
-  batch_size: 32
-  epochs_map: 2000
+  batch_size: 64
+  epochs_map: 100
   lr_map: 0.001
   alpha: 1.0
+  seed: 1278316782
 inducing:
-  m_induc: 16
-  epochs_induc: 100
+  m_induc: 20
+  epochs_induc: 200
   lr_induc: 0.01
   alpha: 1.0
   mc_samples: 5
+  seed: 314159265
