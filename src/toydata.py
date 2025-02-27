@@ -72,6 +72,26 @@ def data_ex5():
     return x, y
 
 
+def plot_regression_data(x,y):
+    from nplot import scatterp
+    scatterp(x, y, label='data')
+
+def plot_binary_classification_data(x,y):
+    from nplot import scatterp
+    scatterp(*x[y==0].T, label='Class F', color='salmon')
+    scatterp(*x[y==1].T, label='Class T')
+    
+def plot_data(x,y,name,plotf):
+    import matplotlib.pyplot as plt
+    from seaborn import set_style
+    set_style('darkgrid')
+    plotf(x,y)
+    plt.legend()
+    plt.title(f"{name} dataset")
+    os.makedirs("fig", exist_ok=True)
+    plt.savefig(f"fig/{name}.pdf")
+
+
 """DATA FACTORY"""
 def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
     """
@@ -80,8 +100,10 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
     """
     if dataset_name == 'xor':
         x, y = xor_dataset(n, key, noise)
+        plot_data(x,y,dataset_name,plot_binary_classification_data)
     elif dataset_name == 'sine':
         x, y = sine_wave_dataset(n, key, noise, split_in_middle=split_in_middle)
+        plot_data(x,y,dataset_name,plot_regression_data)
     else:
         raise ValueError(f"Unknown dataset_name = {dataset_name}")
     return x, y
@@ -98,7 +120,7 @@ def main():
     parser.add_argument("--n_samples", type=int, default=128,
                         help="Number of data samples to generate.")
     parser.add_argument("--noise", type=float, default=0.5,
-                        help="Noise level for the dataset.")
+                        help="Noise level (scale) for the dataset.")
     parser.add_argument("--split_in_middle", action="store_true",
                         help="If set, use the 'split' variant for the sine dataset.")
     parser.add_argument("--seed", type=int, default=42,

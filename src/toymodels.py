@@ -11,7 +11,13 @@ class SimpleRegressor(nn.Module):
             X = nn.gelu(
                     nn.Dense(features=self.numh)(X)
                 )
-        return nn.Dense(features=1)(X)
+        # output = nn.Dense(features=2)(X)
+        # mean,logvar = jax.numpy.split(output, 2, axis=1)  # shape [batch_size, 1] each
+        mean = nn.Dense(features=1)(X)
+        # logvar = self.param('logvar', nn.initializers.uniform, ())
+        logvar = self.param('logvar', nn.initializers.zeros, ()) 
+        # logvar = jax.numpy.broadcast_to(logvar, (mean.shape[0],1)) # todo really necessary to do this manual broadcast?
+        return mean,logvar
     
     
 class SimpleClassifier(nn.Module):

@@ -1,0 +1,64 @@
+import jax
+import jax.numpy as jnp
+import tensorflow_probability.substrates.jax as tfp
+
+from ggn import ensure_symmetry, compute_ggn
+
+
+def posterior_lla(map_state, prior_std, x, y=None, full_set_size=None, return_unravel_fn=False):
+    """
+    Posterior parameter distribution.
+    """
+    if y is None:
+        y,logvar = jax.lax.stop_gradient(map_state.apply_fn(map_state.params, x)) # ! use real labels y if provided or the inducing point function values
+    GGN, flat_params_map, unravel_fn = compute_ggn(map_state, x, y, full_set_size=full_set_size) 
+    prior_precision = 1.0 / (prior_std**2)
+    GGN += prior_precision*jnp.eye(GGN.shape[0])
+    GGN = ensure_symmetry(GGN)
+    H_approx = jnp.linalg.inv(GGN)
+    posterior_dist = tfp.distributions.MultivariateNormalFullCovariance(
+            loc=flat_params_map.astype(jnp.float64), # todo: cast to f64 or other to f32?
+            covariance_matrix=H_approx
+        )
+    if return_unravel_fn:
+        return posterior_dist, unravel_fn
+    return posterior_dist
+
+
+def predict_lla(map_state, xnew, xdata, ydata=None, prior_std=1.0, full_set_size=None):
+    """
+    Posterior predictive distribution.
+    """
+    if ydata is None:
+        ydata,logvar = jax.lax.stop_gradient(map_state.apply_fn(map_state.params, xdata)) # ! use real labels y if provided or the inducing point function values
+    GGN, flat_params_map, unravel_fn = compute_ggn(map_state, xdata, ydata, full_set_size=full_set_size) 
+    prior_precision = 1.0 / (prior_std**2)
+    GGN += prior_precision*jnp.eye(GGN.shape[0])
+    GGN = ensure_symmetry(GGN)
+    H_approx = jnp.linalg.inv(GGN)
+    
+    @jax.jit
+    def flat_apply_fn(flat_p, inputs):
+        p = unravel_fn(flat_p)
+        mu_batched, logvar_batched = map_state.apply_fn(p, inputs)
+        return mu_batched
+    
+    @jax.jit
+    def per_datum_jacobian(xi):
+        return jax.grad(lambda fp: flat_apply_fn(fp, xi[None]).squeeze())(flat_params_map)
+    Jnew = jax.vmap(per_datum_jacobian)(xnew)
+    
+    f_mean = flat_apply_fn(flat_params_map, xnew).squeeze(axis=-1)
+    
+    @jax.jit
+    def per_datum_cov(Ji):
+        return Ji @ H_approx @ Ji.T
+    f_cov = jax.vmap(per_datum_cov)(Jnew)
+    f_cov = jnp.diag(f_cov)
+    
+    assert jnp.all(jnp.linalg.eigvals(f_cov) > 0), "Covariance matrix not PD!"
+    
+    return tfp.distributions.MultivariateNormalFullCovariance(
+        loc=f_mean, 
+        covariance_matrix=f_cov
+    )
