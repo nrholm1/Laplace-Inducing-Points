@@ -25,6 +25,24 @@ from utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkp
 jax.config.update("jax_enable_x64", True)
 
 
+def plot_map(map_model_state, traindata, testdata, alpha_map):
+    # ? visualize MAP estimator
+    xtrain, ytrain = traindata
+    xtest, ytest = testdata
+    fig, ax = plt.subplots(figsize=(8,5))
+    xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
+    postpreddist_full = predict_lla(
+        map_model_state, xlin, xtrain, ytrain, prior_std=alpha_map**(-0.5)
+    )
+    plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
+                    text="full", color='orange', zorder=5)
+    scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
+    scatterp(xtrain, ytrain, zorder=1, label='Train data')
+    plt.legend(loc='lower right')
+    os.makedirs("fig", exist_ok=True)
+    plt.savefig("fig/map_estimator.pdf")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", type=str, default="full_pipeline",
@@ -129,19 +147,10 @@ def main():
             prefix=map_ckpt_prefix,
             step=epochs_map
         )
+        
         # ? visualize MAP estimator
-        fig, ax = plt.subplots(figsize=(8,5))
-        xlin = jnp.linspace(-4, 3, 100)[:, None]
-        postpreddist_full = predict_lla(
-            map_model_state, xlin, xtrain, ytrain, prior_std=1.0
-        )
-        plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
-                        text="full", color='orange', zorder=5)
-        scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
-        scatterp(xtrain, ytrain, zorder=1, label='Train data')
-        plt.legend(loc='lower right')
-        os.makedirs("fig", exist_ok=True)
-        plt.savefig("fig/map_estimator.pdf")
+        plot_map(map_model_state, (xtrain, ytrain), (xtest, ytest), alpha_map)
+        
         if args.mode == "train_map":
             print("[DONE] MAP training only.")
             return
@@ -156,8 +165,8 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    # xinit = jax.random.uniform(rng_inducing, shape=(m_induc,)) * 7.0 - 4.0
-    xinit = jnp.linspace(-4, 3, m_induc)[:,None]
+    xinit = xtrain
+    # xinit = jnp.linspace(xtrain.min(), xtrain.max(), m_induc)[:,None]
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         xoptimizer = optax.adam(lr_induc)
@@ -191,16 +200,17 @@ def main():
         )
 
     # =========== PART C: Visualization ===========
-    if args.mode in ["visualize", "full_pipeline"]:
-        xlin = jnp.linspace(-4, 3, 100)[:, None]
+    if args.mode in ["visualize", "train_inducing", "full_pipeline"]:
+        xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
+        prior_std = alpha_map**(-0.5) # todo verify this?
         postpreddist_full = predict_lla(
-            map_model_state, xlin, xtrain, ytrain, prior_std=1.0
+            map_model_state, xlin, xtrain, ytrain, prior_std=prior_std
         )
         postpreddist_rand = predict_lla(
-            map_model_state, xlin, xinit, prior_std=1.0, full_set_size=xtrain.shape[0]
+            map_model_state, xlin, xinit, prior_std=prior_std, full_set_size=xtrain.shape[0]
         )
         postpreddist_optimized = predict_lla(
-            map_model_state, xlin, xinduc, prior_std=1.0, full_set_size=xtrain.shape[0]
+            map_model_state, xlin, xinduc, prior_std=prior_std, full_set_size=xtrain.shape[0]
         )
     
         fig, ax = plt.subplots(figsize=(8,5))
@@ -221,35 +231,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-"""#!SAVING THIS CODE BC UNIMPLEMENTED PLOT"""
-# m = 16
-# subsample_key = jax.random.PRNGKey(seed=314159265)
-# #%%
-# xlin = jnp.linspace(-4.5,3.5,100)[:,None]
-# ylin_map = model.apply(map_model_state.params, xlin)
-
-# fig, ax = plt.subplots(figsize=(8,5))
-
-# # xinit = jnp.linspace(xtest.min(), xtest.max(), num=m)
-# # xinit = jax.random.normal(jax.random.PRNGKey(4), shape=(m,))* 2
-# xinit = jax.random.uniform(jax.random.PRNGKey(4), shape=(m,))*7 - 4
-# perm = jax.random.permutation(subsample_key, xtrain.shape[0])
-# subsample = perm[:m]
-# xtrain_subs = xinit
-# predictive_dist_subsampled = predict_lla(map_model_state, xlin, 
-#                                          xtrain_subs,
-#                                          prior_std=1.0, full_set_size=xtrain.shape[0])
-# predictive_dist =            predict_lla(map_model_state, xlin, 
-#                                          xtrain,
-#                                          prior_std=1.0)
-# plot_cinterval(xlin.squeeze(), predictive_dist.mean(), predictive_dist.stddev(), 
-#                text="full", color='orange',zorder=4)
-# plot_cinterval(xlin.squeeze(), predictive_dist_subsampled.mean(), predictive_dist_subsampled.stddev(), 
-#                text="subsampled", color='red', zorder=3)
-# scatterp(xtest,ytest,color=Colors.yellow, zorder=2, label='Test data')
-# # scatterp(xtrain_subs, ytrain_subs, color='red', zorder=4, label='Inducing data points')
-# plot_inducing_points_1D(ax, xtrain_subs, offsetp=-0.05, zorder=3, label=None) # ! plot last to ensure correct ylim!
-# plt.legend(loc='lower right')
-# plt.show()
