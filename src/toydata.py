@@ -49,8 +49,8 @@ def sine_wave_dataset(n, key, noise=0.5, split_in_middle=False):
         x = jax.random.uniform(key=datakey, minval=-4.0, maxval=3.0, shape=(n,)).reshape(-1, 1)
     else:
         # Example of splitting the domain into two portions and merging them
-        x1 = jax.random.uniform(key=datakey, minval=-4.0, maxval=-1.0, shape=(n,)).reshape(-1, 1)
-        x2 = jax.random.uniform(key=datakey, minval=0.0, maxval=3.0, shape=(n,)).reshape(-1, 1)
+        x1 = jax.random.uniform(key=datakey, minval=-4.0, maxval=-1.0, shape=(n//2,)).reshape(-1, 1)
+        x2 = jax.random.uniform(key=datakey, minval=0.0, maxval=3.0, shape=(n//2,)).reshape(-1, 1)
         x = jnp.concatenate([x1,x2], axis=0)
         perm = jax.random.permutation(datakey, x.shape[0])
         x = x[perm]

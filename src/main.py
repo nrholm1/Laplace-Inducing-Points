@@ -182,7 +182,7 @@ def main():
         )
         if args.mode == "train_inducing":
             print("[DONE] Inducing training only.")
-            return
+            # return # ! don't return, visualize
     else:
         xinduc = load_array_checkpoint(
             ckpt_dir=args.ckpt_induc,
@@ -211,7 +211,7 @@ def main():
         plot_cinterval(xlin.squeeze(), postpreddist_optimized.mean(), postpreddist_optimized.stddev(), 
                        text="ind. optimized", color='green', zorder=4)
         scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
-        scatterp(xtest, ytest, zorder=1, label='Train data')
+        scatterp(xtrain, ytrain, zorder=1, label='Train data')
         plot_inducing_points_1D(ax, xinduc, color='green', offsetp=0.00, zorder=3, label=None)
         plot_inducing_points_1D(ax, xinit, color='red', offsetp=0.00, zorder=3, label=None)
         plt.legend(loc='lower right')

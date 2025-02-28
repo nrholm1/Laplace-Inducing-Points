@@ -2,3 +2,5 @@ jax
 jaxlib
 matplotlib
 seaborn
+pytest
+torch

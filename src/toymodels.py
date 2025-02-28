@@ -16,7 +16,7 @@ class SimpleRegressor(nn.Module):
         mean = nn.Dense(features=1)(X)
         # logvar = self.param('logvar', nn.initializers.uniform, ())
         logvar = self.param('logvar', nn.initializers.zeros, ()) 
-        # logvar = jax.numpy.broadcast_to(logvar, (mean.shape[0],1)) # todo really necessary to do this manual broadcast?
+        logvar = jax.numpy.broadcast_to(logvar, (mean.shape[0])) # todo really necessary to do this manual broadcast?
         return mean,logvar
     
     
