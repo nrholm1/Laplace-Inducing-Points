@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 
 from src.ggn import compute_ggn, per_sample_nll
+from src.utils import is_pd
 from fixtures import regression_1d_data, small_model_state
 
 
@@ -52,3 +53,17 @@ def test_ggn_shape(regression_1d_data, small_model_state):
     assert GGN.shape[0] == flat_params.shape[0], (
         f"GGN shape {GGN.shape} does not match #params {flat_params.shape}"
     )
+    
+
+# Test #3: GGN is positive definite
+def test_ggn_pd(regression_1d_data, small_model_state):
+    """
+    1) Compute the GGN using our implementation.
+    2) Check that it is PD
+    """
+    X, y = regression_1d_data
+    state = small_model_state
+
+    GGN, *_ = compute_ggn(state, X, y)
+
+    assert is_pd(GGN), "GGN is not positive definite!"

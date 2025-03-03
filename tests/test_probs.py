@@ -5,21 +5,6 @@ import jax.numpy as jnp
 from src.train_map import nl_posterior_fun, nl_likelihood_fun, nl_prior_fun
 from fixtures import regression_1d_data, small_model_state
 
-# todo 1. Simple synthetic distributions
-    # todo 1a: small synthetic model (known params)
-    # todo 1b: small synthetic dataset from known model
-    # todo 1c: compute log likelihood with nl_likelihood_fun
-    # todo 1d: compare to manually computed log likelihood
-
-# todo 2. Toy posterior setup
-    # todo 2a: compute log prior manually
-    # todo 2b: combine with log likelihood
-    # todo 2c: check nl_posterior_fun = nl_likelihood + nl_prior
-
-
-# todo 3. Verify learned variance term!
-    # todo 3a: how??
-
 
 # 1. Testing the negative log likelihood (nl_likelihood_fun)
 def test_nl_likelihood_fun(regression_1d_data, small_model_state):
@@ -33,15 +18,16 @@ def test_nl_likelihood_fun(regression_1d_data, small_model_state):
     # Set known parameters
     state.params["W"] = 2.0
     state.params["b"] = 0.0
-    state.params["logvar"] = 0.0
+    state.params["logvar"] = 2.3
 
     nll_fun_val = nl_likelihood_fun(state.apply_fn, state.params, regression_1d_data)
 
     # Manually compute the nll
     manual_nll = 0.0
+    sigma2 = jnp.exp(2.3)  # variance corresponding to logvar=2.3
     for xi, yi in zip(X, y):
         mu = 2.0 * xi + 0.0
-        manual_nll += 0.5 * (jnp.log(2 * jnp.pi) + 0.0 + ((yi - mu)**2) / 1.0)
+        manual_nll += 0.5 * (jnp.log(2 * jnp.pi) + 2.3 + ((yi - mu)**2) / sigma2)
 
     np.testing.assert_allclose(nll_fun_val, manual_nll, rtol=1e-4, atol=1e-6)
 
@@ -87,6 +73,7 @@ def test_nl_posterior_fun(regression_1d_data, small_model_state):
     
     np.testing.assert_allclose(posterior_val, nll_val + prior_val, rtol=1e-4, atol=1e-6)
 
+
 # 4. Verifying the learned variance term's effect.
 def test_learned_variance_effect(regression_1d_data, small_model_state):
     """
@@ -102,9 +89,9 @@ def test_learned_variance_effect(regression_1d_data, small_model_state):
     state.params["b"] = 0.0
 
     # Compute nll for two different logvar values.
-    state.params["logvar"] = -1.0  # variance = exp(-1) ~ 0.3679
+    state.params["logvar"] = -1.0  # variance = exp(-1) ~ 0.37
     nll_low = nl_likelihood_fun(state.apply_fn, state.params, regression_1d_data)
-    state.params["logvar"] = 1.0   # variance = exp(1) ~ 2.7183
+    state.params["logvar"] = 1.0   # variance = exp(1) ~ 2.72
     nll_high = nl_likelihood_fun(state.apply_fn, state.params, regression_1d_data)
 
     # They should be different. (You could further manually compute the expected change,

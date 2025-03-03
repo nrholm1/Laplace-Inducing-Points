@@ -2,3 +2,5 @@
 checkpoint/*
 fig/*
 *.egg-info
+*.log
+.vscode

@@ -2,7 +2,18 @@ import os
 import yaml
 import numpy as np
 import jax
+import jax.numpy as jnp
 from flax.training import train_state, checkpoints
+
+is_pd = lambda M: jnp.all(jnp.linalg.eigvals(M) > 1e-6)
+# def is_pd(matrix):
+#     # Attempt Cholesky factorization; if it fails, matrix is not PD.
+#     try:
+#         jnp.linalg.cholesky(matrix)
+#         return True
+#     except Exception:
+#         return False
+    
 
 def save_array_checkpoint(array, ckpt_dir, name, step):
     """

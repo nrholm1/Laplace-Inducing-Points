@@ -2,20 +2,32 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax as tfp
 
-from ggn import ensure_symmetry, compute_ggn
+from src.ggn import ensure_symmetry, compute_ggn
+
+def compute_curvature_approx(map_state, dataset, prior_std, full_set_size=None, return_Hinv=True):
+    x,y = dataset
+    GGN, flat_params_map, unravel_fn = compute_ggn(map_state, x, y, full_set_size=full_set_size) 
+    prior_precision = 1.0 / (prior_std**2)
+    GGN += prior_precision*jnp.eye(GGN.shape[0])
+    GGN = ensure_symmetry(GGN) # ! expensive, might not be needed
+    if return_Hinv: return GGN, flat_params_map, unravel_fn
+    else: return jnp.linalg.inv(GGN), flat_params_map, unravel_fn
 
 
 def posterior_lla(map_state, prior_std, x, y=None, full_set_size=None, return_unravel_fn=False):
     """
     Posterior parameter distribution.
     """
+    # todo handle this correctly!
     if y is None:
         y,logvar = jax.lax.stop_gradient(map_state.apply_fn(map_state.params, x)) # ! use real labels y if provided or the inducing point function values
-    GGN, flat_params_map, unravel_fn = compute_ggn(map_state, x, y, full_set_size=full_set_size) 
-    prior_precision = 1.0 / (prior_std**2)
-    GGN += prior_precision*jnp.eye(GGN.shape[0])
-    GGN = ensure_symmetry(GGN)
-    H_approx = jnp.linalg.inv(GGN)
+    
+    H_approx, flat_params_map, unravel_fn = compute_curvature_approx(map_state, 
+                                                                     (x,y), 
+                                                                     prior_std,
+                                                                     full_set_size=full_set_size, 
+                                                                     return_Hinv=False)
+
     posterior_dist = tfp.distributions.MultivariateNormalFullCovariance(
             loc=flat_params_map.astype(jnp.float64), # todo: cast to f64 or other to f32?
             covariance_matrix=H_approx
@@ -25,17 +37,19 @@ def posterior_lla(map_state, prior_std, x, y=None, full_set_size=None, return_un
     return posterior_dist
 
 
-def predict_lla(map_state, xnew, xdata, ydata=None, prior_std=1.0, full_set_size=None):
+def predict_lla(map_state, xnew, x, y=None, prior_std=1.0, full_set_size=None):
     """
     Posterior predictive distribution.
     """
-    if ydata is None:
-        ydata,logvar = jax.lax.stop_gradient(map_state.apply_fn(map_state.params, xdata)) # ! use real labels y if provided or the inducing point function values
-    GGN, flat_params_map, unravel_fn = compute_ggn(map_state, xdata, ydata, full_set_size=full_set_size) 
-    prior_precision = 1.0 / (prior_std**2)
-    GGN += prior_precision*jnp.eye(GGN.shape[0])
-    GGN = ensure_symmetry(GGN)
-    H_approx = jnp.linalg.inv(GGN)
+    # todo handle this correctly!
+    if y is None:
+        y,logvar = jax.lax.stop_gradient(map_state.apply_fn(map_state.params, x)) # ! use real labels y if provided or the inducing point function values
+    
+    H_approx, flat_params_map, unravel_fn = compute_curvature_approx(map_state, 
+                                                                     (x,y), 
+                                                                     prior_std,
+                                                                     full_set_size=full_set_size, 
+                                                                     return_Hinv=False)
     
     @jax.jit
     def flat_apply_fn(flat_p, inputs):

@@ -23,29 +23,42 @@ def second_derivative_outputs_nll(params, xi, yi, apply_fn):
     exp_neg_logvar = jnp.exp(-logvar)
     # Second derivative components:
     d2L_dmu2 = exp_neg_logvar
-    d2L_dmu_dlogvar = (yi - mu) * exp_neg_logvar
+    # d2L_dmu_dlogvar = (yi - mu) * exp_neg_logvar
     d2L_dlogvar2 = 0.5 * (yi - mu)**2 * exp_neg_logvar
-    H = jnp.array([[d2L_dmu2,      d2L_dmu_dlogvar],
-                   [d2L_dmu_dlogvar, d2L_dlogvar2]])
+    # H = jnp.array([[d2L_dmu2,      d2L_dmu_dlogvar],
+    #                [d2L_dmu_dlogvar, d2L_dlogvar2]])
+    H = jnp.array([[d2L_dmu2,      jnp.array([0.])],
+                   [jnp.array([0.]), d2L_dlogvar2]]) # todo: major fix needed here! This is a hack
+    # H = jnp.eye(2)
     return H
 
 
-def compute_ggn(state, x, y, full_set_size=None):
+# todo more (memory-)efficient implementation of all of this? :D
+def compute_ggn(state, x, y=None, full_set_size=None):
     flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params)
-
-    def model_outputs(flatp, xi):
+    def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
         return state.apply_fn(p_unr, xi)
     
-    # todo more (memory-)efficient implementation of all of this? :D
-    jac_tuple = jax.vmap(lambda xi: jax.jacobian(lambda p: model_outputs(p, xi))(flat_params))(x)
+    jac_tuple = jax.vmap(
+        lambda xi: jax.jacobian(
+            lambda p: model_fun(p, xi)
+            )(flat_params)
+        )(x)
     J = jnp.stack(jac_tuple, axis=1).squeeze()
-    H = jax.vmap(lambda xi, yi: second_derivative_outputs_nll(unravel_fn(flat_params), xi, yi, state.apply_fn))(x, y).squeeze()
-    
-    def per_sample_ggn(Ji, Hi):
-        return Ji.T @ Hi @ Ji
-
-    GGN = jax.vmap(per_sample_ggn)(J, H).sum(axis=0)
+    if y is not None:
+        H = jax.vmap(lambda xi, yi: second_derivative_outputs_nll(unravel_fn(flat_params), 
+                                                                  xi, 
+                                                                  yi, 
+                                                                  state.apply_fn))(x, y).squeeze()
+        def per_sample_ggn(Ji, Hi):
+            return Ji.T @ Hi @ Ji
+        GGN = jax.vmap(per_sample_ggn)(J, H).sum(axis=0)
+    else:
+        def per_sample_ggn(Ji):
+            return Ji.T @ Ji
+        GGN = jax.vmap(per_sample_ggn)(J).sum(axis=0)
+        
     
     # ! Recalibration term (if necessary) 
     # todo maybe make learnable?

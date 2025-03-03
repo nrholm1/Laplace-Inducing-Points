@@ -47,7 +47,15 @@ run:
 		--model_config config/$(MODEL).yml \
 		--optimization_config config/optimization.yml
 
+debug_run:
+	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(main) $(mode) \
+		--dataset $(DATASET) \
+		--model_config config/$(MODEL).yml \
+		--optimization_config config/optimization.yml > debug.log 2>&1 &
+	sleep 1
+	@echo "debugpy ready"
 
+# run targets
 train_map:
 	$(MAKE) run mode=train_map
 train_inducing:
@@ -57,13 +65,19 @@ full_pipeline:
 visualize:
 	$(MAKE) run mode=visualize
 
+# debug targets
+debug_map:
+	$(MAKE) debug_run mode=train_map
+debug_inducing:
+	$(MAKE) debug_run mode=train_inducing
+
 data:
 	$(PYTHON_INTERPRETER) $(datamain) --dataset $(D) --n_samples $(N) --noise $(EPS) --seed $(SEED) $(ARGS)
 
 
 N1 = 256
 N2 = 256
-EPS1 = 0.3
+EPS1 = 0.5
 EPS2 = 0.3
 SEED1 = 1526
 SEED2 = 6251
