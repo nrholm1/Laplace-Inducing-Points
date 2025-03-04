@@ -5,9 +5,9 @@ map:
   alpha: 0.5
   seed: 127831678241
 inducing:
-  m_induc: 100
-  epochs_induc: 100
+  m_induc: 30
+  epochs_induc: 200
   lr_induc: 0.01
   alpha: 0.5
-  mc_samples: 5
+  mc_samples: 10
   seed: 3141592650

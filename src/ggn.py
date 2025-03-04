@@ -34,37 +34,36 @@ def second_derivative_outputs_nll(params, xi, yi, apply_fn):
 
 
 # todo more (memory-)efficient implementation of all of this? :D
-def compute_ggn(state, x, y=None, full_set_size=None):
+def compute_ggn(state, x, w, y=None, full_set_size=None):
     flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params)
+    
+    # ! constrain w all terms are nonnegative
+    w_constrained = jax.nn.softmax(w)
+    # w_constrained = jax.nn.softplus(w)
+
     def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
         return state.apply_fn(p_unr, xi)
-    
-    jac_tuple = jax.vmap(
-        lambda xi: jax.jacobian(
-            lambda p: model_fun(p, xi)
-            )(flat_params)
-        )(x)
-    J = jnp.stack(jac_tuple, axis=1).squeeze()
-    if y is not None:
-        H = jax.vmap(lambda xi, yi: second_derivative_outputs_nll(unravel_fn(flat_params), 
-                                                                  xi, 
-                                                                  yi, 
-                                                                  state.apply_fn))(x, y).squeeze()
-        def per_sample_ggn(Ji, Hi):
-            return Ji.T @ Hi @ Ji
-        GGN = jax.vmap(per_sample_ggn)(J, H).sum(axis=0)
-    else:
-        def per_sample_ggn(Ji):
-            return Ji.T @ Ji
-        GGN = jax.vmap(per_sample_ggn)(J).sum(axis=0)
-        
-    
-    # ! Recalibration term (if necessary) 
-    # todo maybe make learnable?
-    N = x.shape[0]
-    M = full_set_size or N
-    GGN *= N / M
+
+    m = x.shape[0]
+    # Initialize GGN as a zero matrix
+    GGN = jnp.zeros((flat_params.shape[0], flat_params.shape[0]))
+
+    def body_fun(i, acc):
+        xi = x[i]
+        # Compute the Jacobian for the current inducing point
+        jac_tuple = jax.jacobian(lambda p: model_fun(p, xi))(flat_params)
+        J = jnp.stack(jac_tuple, axis=1).squeeze()
+        if y is not None:
+            yi = y[i]
+            H = second_derivative_outputs_nll(unravel_fn(flat_params), xi, yi, state.apply_fn).squeeze()
+            ggn_i = J.T @ H @ J
+        else:
+            ggn_i = J.T @ J
+        # Multiply by the learnable weight for this inducing point and accumulate
+        return acc + w_constrained[i] * ggn_i
+
+    GGN = jax.lax.fori_loop(0, m, body_fun, GGN)
 
     return GGN, flat_params, unravel_fn
     

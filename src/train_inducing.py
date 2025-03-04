@@ -41,11 +41,15 @@ def var_kl_fun(q, alpha):
     return kl_term
 
 
-def naive_objective(xind, dataset, state, alpha, rng, num_mc_samples, full_set_size=None, reg_coeff=0):  # todo reg_coeff currently defaults to 0
+def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, full_set_size=None, reg_coeff=0):
+    # Unpack the parameters: inducing points x and weights w
+    x, w = params
+
     q, unravel_fn = posterior_lla(
         state,
         prior_std=alpha,# todo correct alpha used here?
-        x=xind,
+        x=x,
+        w=w,
         y=None,  # ? explicitly pass no labels
         full_set_size=full_set_size,
         return_unravel_fn=True
@@ -53,23 +57,28 @@ def naive_objective(xind, dataset, state, alpha, rng, num_mc_samples, full_set_s
 
     loglik_term = var_loglik_fun(q, dataset, state.apply_fn, unravel_fn, rng, num_mc_samples=num_mc_samples)
     kl_term = var_kl_fun(q, alpha)
-    reg_term = reg_coeff * jnp.sum(jnp.square(xind))
-    
+    reg_term = 0 # ! reg_coeff * (jnp.sum(jnp.square(x)) + jnp.sum(jnp.square(w)))
+
     return - (loglik_term - kl_term) + reg_term
 
 
 variational_grad = jax.value_and_grad(naive_objective)
 
 
-def optimize_step(x, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, full_set_size=None):
+def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, full_set_size=None):
     loss, grads = variational_grad(
-        x, dataset, map_model_state, alpha, rng,
+        params, 
+        dataset, 
+        map_model_state, 
+        alpha, 
+        rng,
         num_mc_samples=num_mc_samples,
         full_set_size=full_set_size
     )
     updates, new_opt_state = xoptimizer.update(grads, opt_state)
-    new_x = optax.apply_updates(x, updates)
-    return new_x, new_opt_state, loss
+    new_params = optax.apply_updates(params, updates)
+    return new_params, new_opt_state, loss
+
 
 
 # ? JIT optimize_step here, since the static_argnames is problematic in the decorator?
@@ -77,37 +86,36 @@ def optimize_step(x, dataset, map_model_state, alpha, opt_state, rng, xoptimizer
 optimize_step = jax.jit(optimize_step, static_argnames=['xoptimizer', 'num_mc_samples', 'full_set_size']) # ! not JITted for debug
 
 
-def train_inducing_points(map_model_state, xinit, xoptimizer, dataloader, rng, num_mc_samples, alpha, num_steps):
-    opt_state = xoptimizer.init(xinit)
-    x = xinit
-    # todo pass lb,ub bounding boxes maybe? Or another way to enforce constraints, e.g. regularization
+def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader, rng, num_mc_samples, alpha, num_steps):
+    params = (xinit, winit)
+    opt_state = xoptimizer.init(params)
     _iter = iter(dataloader)
-
+    
     def get_next_sample(num_batches=1):
         nonlocal _iter 
         sample_batches = []
         for _ in range(num_batches):
             try:
                 batch = next(_iter)
-            except StopIteration:  # The iterator is exhausted; reset it #! should reshuffle the data s.t. the iteration varies each time
+            except StopIteration:
                 _iter = iter(dataloader)
                 batch = next(_iter)
             sample_batches.append(batch)
         sample = list(zip(*sample_batches))
         sample = (jnp.concatenate(sample[0], axis=0), jnp.concatenate(sample[1], axis=0))
         return sample
-
-    dataset_sample = get_next_sample(num_batches=5) # ! estimate constraints from a 5 batch sample (i.e. data support)
-    # dataset_sample = get_next_sample(num_batches=1)  # ! estimate constraints from a 5 batch sample (i.e. data support)
-    lb, ub = dataset_sample[0].min(), dataset_sample[0].max()  # data support range #! 1D case here!
-    N = len(dataloader) * len(next(iter(dataloader))[0])  # todo a bit wrong when {full_data_size % batch_size != 0}
+    
+    dataset_sample = get_next_sample(num_batches=5)
+    # todo better strategy for enforcing constraints?
+    lb, ub = dataset_sample[0].min(), dataset_sample[0].max()  # ! data support range (1D case)
+    N = len(dataloader) * len(next(iter(dataloader))[0])
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
         dataset_sample = get_next_sample(num_batches=1)
         rng, rng_step = jax.random.split(rng)
-        x, opt_state, loss = optimize_step(
-            x, 
+        params, opt_state, loss = optimize_step(
+            params, 
             dataset_sample, 
             map_model_state, 
             alpha, 
@@ -117,11 +125,14 @@ def train_inducing_points(map_model_state, xinit, xoptimizer, dataloader, rng, n
             num_mc_samples=num_mc_samples, 
             full_set_size=N
         )
-        x = jnp.clip(x, lb, ub)  # ! hard constraint enforcement - project onto (estimated) data support
+        # Unpack parameters:
+        x, w = params
+        # ! Enforce constraints on x (and w, if necessary)
+        x = jnp.clip(x, lb, ub)
+        params = (x, w)
         
         if step == 0:
             print(f"Initial loss: {loss:.3f}")
-        if step % 1 == 0:
-            pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
+        pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
     
-    return x
+    return params
