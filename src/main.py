@@ -166,9 +166,9 @@ def main():
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     # xinit = xtrain
-    # xinit = jnp.linspace(xtrain.min(), xtrain.max(), m_induc)[:,None]
-    _, test_loader = get_dataloaders(train_dataset, test_dataset, min(m_induc,len(test_dataset)))
-    xinit = next(iter(test_loader))[0]
+    xinit = jnp.linspace(xtrain.min(), xtrain.max(), m_induc)[:,None]
+    # _, test_loader = get_dataloaders(train_dataset, test_dataset, min(m_induc,len(test_dataset)))
+    # xinit = next(iter(test_loader))[0]
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         xoptimizer = optax.adam(lr_induc)

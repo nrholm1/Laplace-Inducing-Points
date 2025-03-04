@@ -22,7 +22,7 @@ def posterior_lla(map_state, prior_std, x, y=None, full_set_size=None, return_un
     if y is None:
         y,logvar = jax.lax.stop_gradient(map_state.apply_fn(map_state.params, x)) # ! use real labels y if provided or the inducing point function values
     
-    H_approx, flat_params_map, unravel_fn = compute_curvature_approx(map_state, 
+    S_approx, flat_params_map, unravel_fn = compute_curvature_approx(map_state, 
                                                                      (x,y), 
                                                                      prior_std,
                                                                      full_set_size=full_set_size, 
@@ -30,7 +30,7 @@ def posterior_lla(map_state, prior_std, x, y=None, full_set_size=None, return_un
 
     posterior_dist = tfp.distributions.MultivariateNormalFullCovariance(
             loc=flat_params_map.astype(jnp.float64), # todo: cast to f64 or other to f32?
-            covariance_matrix=H_approx
+            covariance_matrix=S_approx
         )
     if return_unravel_fn:
         return posterior_dist, unravel_fn
@@ -45,7 +45,7 @@ def predict_lla(map_state, xnew, x, y=None, prior_std=1.0, full_set_size=None):
     if y is None:
         y,logvar = jax.lax.stop_gradient(map_state.apply_fn(map_state.params, x)) # ! use real labels y if provided or the inducing point function values
     
-    H_approx, flat_params_map, unravel_fn = compute_curvature_approx(map_state, 
+    S_approx, flat_params_map, unravel_fn = compute_curvature_approx(map_state, 
                                                                      (x,y), 
                                                                      prior_std,
                                                                      full_set_size=full_set_size, 
@@ -66,7 +66,7 @@ def predict_lla(map_state, xnew, x, y=None, prior_std=1.0, full_set_size=None):
     
     @jax.jit
     def per_datum_cov(Ji):
-        return Ji @ H_approx @ Ji.T
+        return Ji @ S_approx @ Ji.T
     f_cov = jax.vmap(per_datum_cov)(Jnew)
     f_cov = jnp.diag(f_cov)
     

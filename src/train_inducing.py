@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import optax
 from tqdm import tqdm
 
-from lla import posterior_lla
+from lla import posterior_lla, compute_curvature_approx
 from train_map import nl_likelihood_fun
 
 
@@ -41,7 +41,7 @@ def var_kl_fun(q, alpha):
     return kl_term
 
 
-def naive_objective(xind, dataset, state, alpha, rng, num_mc_samples, full_set_size=None, reg_coeff=0):  # todo reg_coeff currently defaults to 0
+def alternative_objective(xind, dataset, state, alpha, rng, num_mc_samples, full_set_size=None, reg_coeff=0):  # todo reg_coeff currently defaults to 0
     q, unravel_fn = posterior_lla(
         state,
         prior_std=alpha,# todo correct alpha used here?
@@ -58,17 +58,45 @@ def naive_objective(xind, dataset, state, alpha, rng, num_mc_samples, full_set_s
     return - (loglik_term - kl_term) + reg_term
 
 
-variational_grad = jax.value_and_grad(naive_objective)
+def alternative_objective(xind, dataset, state, alpha, full_set_size=None):
+    # ! compute synthetic labels for inducing points
+    yind,logvar = jax.lax.stop_gradient(state.apply_fn(state.params, xind))
+    
+    prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
+    S_full_inv, *_ = compute_curvature_approx(state, dataset, prior_std=prior_std, full_set_size=full_set_size, return_Hinv=True)
+    S_induc,    *_ = compute_curvature_approx(state, (xind, yind), prior_std=prior_std, full_set_size=full_set_size, return_Hinv=False)
+    
+    """
+    ========================
+    Compute KL[ q || qfull ]
+    ========================
+    """
+    trace_term = jnp.linalg.trace(S_full_inv @ S_induc)
+    
+    # log_det_term = jnp.log( 1 / (jnp.linalg.det(S_full_inv) * jnp.linalg.det(S_induc)) ) # ! problematic, super ill-conditioned?
+    sign_full, logdet_full = jnp.linalg.slogdet(S_full_inv)
+    sign_induc, logdet_induc = jnp.linalg.slogdet(S_induc)
+    # todo use signs to signal if determinants are nonpositive - does not play well with JIT
+    log_det_term = - logdet_full - logdet_induc
+    
+    D = 0 # todo const - does it matter for optimization?
+    return 0.5 * (trace_term - D + log_det_term)
+
+variational_grad = jax.value_and_grad(alternative_objective)
 
 
-def optimize_step(x, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, full_set_size=None):
+def optimize_step(xind, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, full_set_size=None):
     loss, grads = variational_grad(
-        x, dataset, map_model_state, alpha, rng,
-        num_mc_samples=num_mc_samples,
+        xind, 
+        dataset, 
+        map_model_state, 
+        alpha, 
+        # rng,
+        # num_mc_samples=num_mc_samples,
         full_set_size=full_set_size
     )
     updates, new_opt_state = xoptimizer.update(grads, opt_state)
-    new_x = optax.apply_updates(x, updates)
+    new_x = optax.apply_updates(xind, updates)
     return new_x, new_opt_state, loss
 
 
