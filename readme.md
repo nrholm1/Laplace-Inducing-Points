@@ -1,1 +1,1 @@
-# Laplace Inducing Points 🪼
+# Laplace Inducing Points 🌌

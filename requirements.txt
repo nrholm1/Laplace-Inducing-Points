@@ -1,5 +1,7 @@
 jax
 jaxlib
+flax
+optax
 matplotlib
 seaborn
 pytest
