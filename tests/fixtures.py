@@ -24,10 +24,6 @@ def small_model_state(regression_1d_data):
     
     With fixed variance, the Gauss-Newton approximation should match
     the full Hessian (computed via jax.hessian) for this linear model.
-    
-    Note that the apply_fn now accepts a `return_logvar` flag. When set to
-    False (e.g. in a prediction mode), it returns only mu without attempting
-    to access the logvar parameter.
     """
     def apply_fn(params, x, return_logvar=True):
         W = params['params']["W"]  # scalar
@@ -42,7 +38,7 @@ def small_model_state(regression_1d_data):
     key_w, key_b, key_logvar = jax.random.split(key, 3)
     W_init = jax.random.normal(key_w, ()) * 0.1
     b_init = jax.random.normal(key_b, ()) * 0.1
-    logvar_init = 0.0
+    logvar_init = jax.random.uniform(key_logvar, ()) * 0.1
 
     params = {'params': {
         "W": W_init,
