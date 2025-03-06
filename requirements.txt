@@ -1,6 +1,10 @@
 jax
 jaxlib
-matplotlib
-seaborn
-pytest
+flax
+optax
 torch
+tensorflow-probability
+seaborn
+matplotlib
+pytest
+tqdm

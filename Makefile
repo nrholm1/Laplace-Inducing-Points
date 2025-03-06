@@ -75,9 +75,9 @@ data:
 	$(PYTHON_INTERPRETER) $(datamain) --dataset $(D) --n_samples $(N) --noise $(EPS) --seed $(SEED) $(ARGS)
 
 
-N1 = 256
-N2 = 256
-EPS1 = 0.5
+N1 = 300
+N2 = 300
+EPS1 = 0.7
 EPS2 = 0.3
 SEED1 = 1526
 SEED2 = 6251
