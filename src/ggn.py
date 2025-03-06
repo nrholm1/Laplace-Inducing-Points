@@ -48,7 +48,7 @@ def compute_full_ggn(state, x, w, full_set_size=None):
         return acc + w_constrained[i] * ggn_i
 
     GGN = varinv * jax.lax.fori_loop(0, m, body_fun, GGN)
-    GGN = GGN.at[jnp.diag_indices(GGN.shape[0])].add(1e-9) # ! (inefficient?) make always PD
+    # GGN = GGN.at[jnp.diag_indices(GGN.shape[0])].add(1e-9) # ! (inefficient?) make always PD
     
     # ! still use recalibration term?
     N = x.shape[0]
