@@ -1,13 +1,14 @@
 import numpy as np
 import jax
 import jax.numpy as jnp
+import jax.flatten_util
 
 from src.ggn import compute_full_ggn, per_sample_nll
 from src.utils import is_pd
 from fixtures import regression_1d_data, small_model_state
 
-
-def test_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
+# Test #1: GGN vs jax Hessian for a known tiny model
+def test_full_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     """
     1) Compute the GGN using our implementation.
     2) Compute the full Hessian of the total negative log-likelihood via jax.hessian.
@@ -19,7 +20,9 @@ def test_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     w = jnp.ones((X.shape[0],))
 
     # Compute GGN using the provided function.
-    GGN, flat_params, unravel_fn = compute_full_ggn(state, X, w)
+    GGN, *_ = compute_full_ggn(state, X, w)
+
+    flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params)
 
     # Define the total negative log-likelihood over the dataset.
     def total_nll(flatp):
@@ -29,6 +32,7 @@ def test_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     
     # Compute the full Hessian via jax.hessian.
     full_hessian = jax.hessian(total_nll)(flat_params)
+    full_hessian = full_hessian[:GGN.shape[0], :GGN.shape[1]] # ! extract model param Hessian block matrix
     
     # Compare the GGN with the full Hessian.
     # (Note: This equality holds in this fixed-variance linear scenario.)
@@ -39,7 +43,7 @@ def test_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
         err_msg="GGN does not match JAX Hessian within tolerance"
     )
 
-# Test #1: Check the shape of the GGN
+# Test #2: Check the shape of the GGN
 def test_full_ggn_shape(regression_1d_data, small_model_state):
     """
     Verify the shape of GGN matches the number of flattened parameters.
@@ -56,7 +60,7 @@ def test_full_ggn_shape(regression_1d_data, small_model_state):
     )
     
 
-# Test #2: GGN is positive definite
+# Test #3: GGN is positive definite
 def test_full_ggn_pd(regression_1d_data, small_model_state):
     """
     1) Compute the GGN using our implementation.
