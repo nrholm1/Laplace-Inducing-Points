@@ -112,6 +112,9 @@ optimize_step = jax.jit(optimize_step, static_argnames=['xoptimizer', 'num_mc_sa
 
 
 def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader, rng, num_mc_samples, alpha, num_steps):
+    logvar = map_model_state.params['params']['logvar']
+    # todo delete map_model_state.params['params']['logvar'] from params.
+    
     params = (xinit, winit)
     opt_state = xoptimizer.init(params)
     _iter = iter(dataloader)

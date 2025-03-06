@@ -1,7 +1,8 @@
 import pdb
 import jax
 import jax.numpy as jnp
-import jax.flatten_util
+
+from src.utils import flatten_nn_params
 
 
 def per_sample_nll(params, xi, yi, apply_fn):
@@ -22,7 +23,7 @@ def second_derivative_outputs_nll(params, xi, apply_fn):
 
 # todo more (memory-)efficient implementation of all of this? :D
 def compute_full_ggn(state, x, w, full_set_size=None):
-    flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params)
+    flat_params, unravel_fn = flatten_nn_params(state.params)
     varinv = jnp.exp( - state.params['params']['logvar']) # todo make dependent on loss fun - this is closed form for regression
     
     # ! constrain w all terms are nonnegative
@@ -32,7 +33,7 @@ def compute_full_ggn(state, x, w, full_set_size=None):
 
     def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
-        return state.apply_fn(p_unr, xi)[0]
+        return state.apply_fn(p_unr, xi, return_logvar=False)
 
     m = x.shape[0]
     # Initialize GGN as a zero matrix

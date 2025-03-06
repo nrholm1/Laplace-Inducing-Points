@@ -41,8 +41,7 @@ def test_predict_lla(small_model_state, regression_1d_data):
     
     def flat_apply_fn(flat_p, inputs):
         p = unravel_fn(flat_p)
-        mu, _ = small_model_state.apply_fn(p, inputs)
-        return mu
+        return small_model_state.apply_fn(p, inputs, return_logvar=False)
     pred_mean = flat_apply_fn(flat_params_map, xnew).squeeze(axis=-1)
     np.testing.assert_allclose(pred_dist.mean(), pred_mean, rtol=1e-4, atol=1e-6)
     

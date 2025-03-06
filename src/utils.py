@@ -4,15 +4,18 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from flax.training import train_state, checkpoints
+import jax.flatten_util
 
 is_pd = lambda M: jnp.all(jnp.linalg.eigvals(M) >= 1e-9)
-# def is_pd(matrix):
-#     # Attempt Cholesky factorization; if it fails, matrix is not PD.
-#     try:
-#         jnp.linalg.cholesky(matrix)
-#         return True
-#     except Exception:
-#         return False
+
+
+def flatten_nn_params(params):
+    # ! maybe inefficient?
+    # Remove the 'logvar' parameter
+    params_without_logvar = {
+        k: v for k, v in params['params'].items() if k != 'logvar'
+    }
+    return jax.flatten_util.ravel_pytree({'params': params_without_logvar})
     
 
 def save_array_checkpoint(array, ckpt_dir, name, step):

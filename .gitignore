@@ -4,3 +4,4 @@ fig/*
 *.egg-info
 *.log
 .vscode
+.DS_Store

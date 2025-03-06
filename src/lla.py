@@ -39,7 +39,7 @@ def predict_lla(map_state, xnew, x, w, y=None, prior_std=1.0, full_set_size=None
     @jax.jit
     def flat_apply_fn(flat_p, inputs):
         p = unravel_fn(flat_p)
-        mu_batched, logvar_batched = map_state.apply_fn(p, inputs)
+        mu_batched = map_state.apply_fn(p, inputs, return_logvar=False)
         return mu_batched
     
     @jax.jit

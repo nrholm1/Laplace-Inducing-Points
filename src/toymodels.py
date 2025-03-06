@@ -2,22 +2,19 @@ from flax import linen as nn
 import jax
 
 class SimpleRegressor(nn.Module):
-    numh: int # number of hidden units per layer
-    numl: int # number of layers
-    
+    numh: int  # number of hidden units per layer
+    numl: int  # number of layers
+
     @nn.compact
-    def __call__(self, X):
+    def __call__(self, X, return_logvar: bool = True):
         for _ in range(self.numl):
-            X = nn.gelu(
-                    nn.Dense(features=self.numh)(X)
-                )
-        # output = nn.Dense(features=2)(X)
-        # mean,logvar = jax.numpy.split(output, 2, axis=1)  # shape [batch_size, 1] each
-        mean = nn.Dense(features=1)(X)
-        # logvar = self.param('logvar', nn.initializers.uniform, ())
-        logvar = self.param('logvar', nn.initializers.zeros, ()) 
-        logvar = jax.numpy.broadcast_to(logvar, (mean.shape[0])) # todo really necessary to do this manual broadcast?
-        return mean,logvar
+            X = nn.gelu(nn.Dense(features=self.numh)(X))
+        mu = nn.Dense(features=1)(X)
+        if return_logvar:
+            logvar = self.param('logvar', nn.initializers.zeros, ())
+            return mu, logvar
+        else:
+            return mu
     
     
 class SimpleClassifier(nn.Module):

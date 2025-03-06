@@ -7,7 +7,6 @@ from src.utils import is_pd
 from fixtures import regression_1d_data, small_model_state
 
 
-# Test #1: GGN vs jax Hessian for a known tiny model
 def test_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     """
     1) Compute the GGN using our implementation.
@@ -40,9 +39,8 @@ def test_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
         err_msg="GGN does not match JAX Hessian within tolerance"
     )
 
-
-# Test #2: Check the shape of the GGN
-def test_ggn_shape(regression_1d_data, small_model_state):
+# Test #1: Check the shape of the GGN
+def test_full_ggn_shape(regression_1d_data, small_model_state):
     """
     Verify the shape of GGN matches the number of flattened parameters.
     """
@@ -58,8 +56,8 @@ def test_ggn_shape(regression_1d_data, small_model_state):
     )
     
 
-# Test #3: GGN is positive definite
-def test_ggn_pd(regression_1d_data, small_model_state):
+# Test #2: GGN is positive definite
+def test_full_ggn_pd(regression_1d_data, small_model_state):
     """
     1) Compute the GGN using our implementation.
     2) Check that it is PD
