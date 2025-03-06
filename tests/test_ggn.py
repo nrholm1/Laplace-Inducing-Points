@@ -17,7 +17,7 @@ def test_full_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     """
     X, y = regression_1d_data
     state = small_model_state
-    w = jnp.ones((X.shape[0],))
+    w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
     # Compute GGN using the provided function.
     GGN, *_ = compute_full_ggn(state, X, w)
@@ -50,7 +50,7 @@ def test_full_ggn_shape(regression_1d_data, small_model_state):
     """
     X, y = regression_1d_data
     state = small_model_state
-    w = jnp.ones((X.shape[0],))
+    w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
     # Call the updated compute_ggn with x, w, and y.
     GGN, flat_params, unravel_fn = compute_full_ggn(state, X, w)
@@ -68,7 +68,7 @@ def test_full_ggn_pd(regression_1d_data, small_model_state):
     """
     X, y = regression_1d_data
     state = small_model_state    
-    w = jnp.ones((X.shape[0],))
+    w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
     GGN, *_ = compute_full_ggn(state, X, w)
 

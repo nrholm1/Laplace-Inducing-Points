@@ -62,15 +62,15 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, full_set
     return - (loglik_term - kl_term) + reg_term
 
 
-def alternative_objective(params, dataset, state, alpha, full_set_size=None):
+def alternative_objective(params, x, state, alpha, full_set_size=None):
     # Unpack the parameters: inducing points x and weights w
     xind, w = params
-    # ! compute synthetic labels for inducing points
-    yind,logvar = jax.lax.stop_gradient(state.apply_fn(state.params, xind))
     
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    S_full_inv, *_ = compute_curvature_approx(state, dataset, prior_std=prior_std, w=jnp.ones_like(dataset[0]), full_set_size=full_set_size, return_Hinv=True)
-    S_induc,    *_ = compute_curvature_approx(state, (xind, yind), prior_std=prior_std, w=w, full_set_size=full_set_size, return_Hinv=False)
+    # w_fake = jnp.ones_like(dataset[0])
+    w_fake = jnp.array(1.)
+    S_full_inv, *_ = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, full_set_size=full_set_size, return_Hinv=True)
+    S_induc,    *_ = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, full_set_size=full_set_size, return_Hinv=False)
     
     """
     ========================
@@ -141,10 +141,11 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
     pbar = tqdm(range(num_steps))
     for step in pbar:
         dataset_sample = get_next_sample(num_batches=1)
+        x_sample,_ = dataset_sample
         rng, rng_step = jax.random.split(rng)
         params, opt_state, loss = optimize_step(
             params, 
-            dataset_sample, 
+            x_sample, 
             map_model_state, 
             alpha, 
             opt_state, 
@@ -158,9 +159,7 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
         # ! Enforce constraints on x (and w, if necessary)
         x = jnp.clip(x, lb, ub)
         params = (x, w)
-        
-        if step == 0:
-            print(f"Initial loss: {loss:.3f}")
-        pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
+
+        pbar.set_description_str(f"[w = {w:.3f}] Loss: {loss:.3f}", refresh=True)
     
     return params

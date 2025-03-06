@@ -4,8 +4,7 @@ import tensorflow_probability.substrates.jax as tfp
 
 from src.ggn import ensure_symmetry, compute_full_ggn
 
-def compute_curvature_approx(map_state, dataset, prior_std, w, full_set_size=None, return_Hinv=True):
-    x, y = dataset
+def compute_curvature_approx(map_state, x, prior_std, w, full_set_size=None, return_Hinv=True):
     GGN, flat_params_map, unravel_fn = compute_full_ggn(map_state, x, w, full_set_size=full_set_size)
     prior_precision = 1.0 / (prior_std**2)
     GGN += prior_precision * jnp.eye(GGN.shape[0])
@@ -17,9 +16,9 @@ def compute_curvature_approx(map_state, dataset, prior_std, w, full_set_size=Non
 
 
 
-def posterior_lla(map_state, prior_std, x, w, y=None, full_set_size=None, return_unravel_fn=False):
+def posterior_lla(map_state, prior_std, x, w, full_set_size=None, return_unravel_fn=False):
     S_approx, flat_params_map, unravel_fn = compute_curvature_approx(
-        map_state, (x, y), prior_std, w, full_set_size=full_set_size, return_Hinv=False
+        map_state, x, prior_std, w, full_set_size=full_set_size, return_Hinv=False
     )
 
     posterior_dist = tfp.distributions.MultivariateNormalFullCovariance(
@@ -31,9 +30,9 @@ def posterior_lla(map_state, prior_std, x, w, y=None, full_set_size=None, return
     return posterior_dist
 
 
-def predict_lla(map_state, xnew, x, w, y=None, prior_std=1.0, full_set_size=None):
+def predict_lla(map_state, xnew, x, w, prior_std=1.0, full_set_size=None):
     S_approx, flat_params_map, unravel_fn = compute_curvature_approx(
-        map_state, (x, y), prior_std, w, full_set_size=full_set_size, return_Hinv=False
+        map_state, x, prior_std, w, full_set_size=full_set_size, return_Hinv=False
     )
     
     @jax.jit

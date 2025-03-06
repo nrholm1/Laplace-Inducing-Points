@@ -170,7 +170,8 @@ def main():
     xinit = jax.random.uniform(rng_inducing, shape=(m_induc,1)) * (xtrain.max() - xtrain.min()) - (jnp.abs(xtrain.min()))
     # _, test_loader = get_dataloaders(train_dataset, test_dataset, min(m_induc,len(test_dataset)))
     # xinit = next(iter(test_loader))[0]
-    winit = jnp.ones_like(xinit)
+    # winit = jnp.ones_like(xinit)
+    winit = jnp.array(1.)
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         xoptimizer = optax.adam(lr_induc)
@@ -212,7 +213,7 @@ def main():
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
         prior_std = alpha_map**(-0.5) # todo verify this?
         postpreddist_full = predict_lla(
-            map_model_state, xlin, xtrain, jnp.ones_like(xtrain), ytrain, prior_std=prior_std
+            map_model_state, xlin, xtrain, jnp.array(1.), prior_std=prior_std
         )
         postpreddist_rand = predict_lla(
             map_model_state, xlin, xinit, w=winit, prior_std=prior_std, full_set_size=xtrain.shape[0]

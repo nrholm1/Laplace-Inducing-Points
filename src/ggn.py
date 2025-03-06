@@ -29,7 +29,7 @@ def compute_full_ggn(state, x, w, full_set_size=None):
     # ! constrain w all terms are nonnegative
     # w_constrained = jax.nn.softmax(w)
     # w_constrained = jax.nn.softplus(w)
-    w_constrained = jnp.ones_like(w) # ! no learned weights
+    # w_constrained = jnp.ones_like(w) # ! no learned weights
 
     def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
@@ -46,7 +46,8 @@ def compute_full_ggn(state, x, w, full_set_size=None):
         # H = second_derivative_outputs_nll(unravel_fn(flat_params), xi, state.apply_fn)
         ggn_i = J.T @ J
         # Multiply by the learnable weight for this inducing point and accumulate
-        return acc + w_constrained[i] * ggn_i
+        # return acc + w_constrained[i] * ggn_i
+        return acc + ggn_i
 
     GGN = varinv * jax.lax.fori_loop(0, m, body_fun, GGN)
     # GGN = GGN.at[jnp.diag_indices(GGN.shape[0])].add(1e-9) # ! (inefficient?) make always PD
@@ -55,6 +56,7 @@ def compute_full_ggn(state, x, w, full_set_size=None):
     N = x.shape[0]
     M = full_set_size or N
     GGN *= M / N
+    GGN *= w
 
     return GGN, flat_params, unravel_fn
     
