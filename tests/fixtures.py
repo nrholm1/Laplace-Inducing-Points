@@ -26,11 +26,11 @@ def small_model_state(regression_1d_data):
     the full Hessian (computed via jax.hessian) for this linear model.
     """
     def apply_fn(params, x):
-        W = params["W"]  # scalar
-        b = params["b"]  # scalar
+        W = params['params']["W"]  # scalar
+        b = params['params']["b"]  # scalar
         mu = W * x + b
         # logvar = 0.0  # Fixed logvar: always 0
-        logvar = params["logvar"]
+        logvar = params['params']["logvar"]
         return mu, logvar * jnp.ones_like(mu)
 
     key = jax.random.PRNGKey(0)
@@ -38,10 +38,10 @@ def small_model_state(regression_1d_data):
     b_init = jax.random.normal(key, ()) * 0.1
     logvar_init = jax.random.uniform(key, ()) * 0.1
 
-    params = {
-        "W": W_init,
+    params = {'params':
+        {"W": W_init,
         "b": b_init,
-        "logvar": logvar_init,
+        "logvar": logvar_init,}
     }
 
     class State:

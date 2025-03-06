@@ -167,8 +167,9 @@ def main():
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     # xinit = xtrain
     # xinit = jnp.linspace(xtrain.min(), xtrain.max(), m_induc)[:,None]
-    _, test_loader = get_dataloaders(train_dataset, test_dataset, min(m_induc,len(test_dataset)))
-    xinit = next(iter(test_loader))[0]
+    xinit = jax.random.uniform(rng_inducing, shape=(m_induc,1)) * (xtrain.max() - xtrain.min()) - (jnp.abs(xtrain.min()))
+    # _, test_loader = get_dataloaders(train_dataset, test_dataset, min(m_induc,len(test_dataset)))
+    # xinit = next(iter(test_loader))[0]
     winit = jnp.ones_like(xinit)
 
     if args.mode in ["train_inducing", "full_pipeline"]:

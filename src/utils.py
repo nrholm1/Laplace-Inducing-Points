@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from flax.training import train_state, checkpoints
 
-is_pd = lambda M: jnp.all(jnp.linalg.eigvals(M) > 1e-6)
+is_pd = lambda M: jnp.all(jnp.linalg.eigvals(M) >= 1e-9)
 # def is_pd(matrix):
 #     # Attempt Cholesky factorization; if it fails, matrix is not PD.
 #     try:

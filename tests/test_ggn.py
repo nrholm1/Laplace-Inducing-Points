@@ -2,7 +2,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from src.ggn import compute_ggn, per_sample_nll
+from src.ggn import compute_full_ggn, per_sample_nll
 from src.utils import is_pd
 from fixtures import regression_1d_data, small_model_state
 
@@ -20,7 +20,7 @@ def test_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     w = jnp.ones((X.shape[0],))
 
     # Compute GGN using the provided function.
-    GGN, flat_params, unravel_fn = compute_ggn(state, X, w, y)
+    GGN, flat_params, unravel_fn = compute_full_ggn(state, X, w)
 
     # Define the total negative log-likelihood over the dataset.
     def total_nll(flatp):
@@ -51,7 +51,7 @@ def test_ggn_shape(regression_1d_data, small_model_state):
     w = jnp.ones((X.shape[0],))
 
     # Call the updated compute_ggn with x, w, and y.
-    GGN, flat_params, unravel_fn = compute_ggn(state, X, w, y)
+    GGN, flat_params, unravel_fn = compute_full_ggn(state, X, w)
     assert GGN.shape[0] == GGN.shape[1], "GGN must be square"
     assert GGN.shape[0] == flat_params.shape[0], (
         f"GGN shape {GGN.shape} does not match #params {flat_params.shape}"
@@ -68,6 +68,6 @@ def test_ggn_pd(regression_1d_data, small_model_state):
     state = small_model_state    
     w = jnp.ones((X.shape[0],))
 
-    GGN, *_ = compute_ggn(state, X, w, y)
+    GGN, *_ = compute_full_ggn(state, X, w)
 
     assert is_pd(GGN), "GGN is not positive definite!"
