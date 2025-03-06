@@ -166,18 +166,20 @@ def main():
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     # xinit = xtrain
-    xinit = jnp.linspace(xtrain.min(), xtrain.max(), m_induc)[:,None]
-    # _, test_loader = get_dataloaders(train_dataset, test_dataset, min(m_induc,len(test_dataset)))
-    # xinit = next(iter(test_loader))[0]
+    # xinit = jnp.linspace(xtrain.min(), xtrain.max(), m_induc)[:,None]
+    _, test_loader = get_dataloaders(train_dataset, test_dataset, min(m_induc,len(test_dataset)))
+    xinit = next(iter(test_loader))[0]
+    winit = jnp.ones_like(xinit)
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         xoptimizer = optax.adam(lr_induc)
         # print("WARNING! Training inducing with full dataset!")
         # train_loader, _ = get_dataloaders(train_dataset, test_dataset, len(train_dataset))
         
-        xinduc = train_inducing_points(
+        xinduc,winduc = train_inducing_points(
             map_model_state, 
             xinit, 
+            winit, 
             xoptimizer,
             dataloader=train_loader,
             rng=rng_inducing,
@@ -186,6 +188,7 @@ def main():
             num_steps=epochs_induc
         )
 
+        # todo also save w!
         save_array_checkpoint(
             array=xinduc,
             ckpt_dir=args.ckpt_induc,
@@ -196,6 +199,7 @@ def main():
             print("[DONE] Inducing training only.")
             # return # ! don't return, visualize
     else:
+        # todo also load w!
         xinduc = load_array_checkpoint(
             ckpt_dir=args.ckpt_induc,
             name=induc_ckpt_name,
@@ -207,16 +211,17 @@ def main():
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
         prior_std = alpha_map**(-0.5) # todo verify this?
         postpreddist_full = predict_lla(
-            map_model_state, xlin, xtrain, ytrain, prior_std=prior_std
+            map_model_state, xlin, xtrain, jnp.ones_like(xtrain), ytrain, prior_std=prior_std
         )
         postpreddist_rand = predict_lla(
-            map_model_state, xlin, xinit, prior_std=prior_std, full_set_size=xtrain.shape[0]
+            map_model_state, xlin, xinit, w=winit, prior_std=prior_std, full_set_size=xtrain.shape[0]
         )
         postpreddist_optimized = predict_lla(
-            map_model_state, xlin, xinduc, prior_std=prior_std, full_set_size=xtrain.shape[0]
+            map_model_state, xlin, xinduc, w=winduc, prior_std=prior_std, full_set_size=xtrain.shape[0]
         )
     
         fig, ax = plt.subplots(figsize=(8,5))
+        plt.title(f"{xinit.shape[0]} inducing points after {epochs_induc} steps")
         plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
                        text="full", color='orange', zorder=5)
         plot_cinterval(xlin.squeeze(), postpreddist_rand.mean(), postpreddist_rand.stddev(), 
