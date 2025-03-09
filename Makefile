@@ -38,20 +38,20 @@ datamain = src/toydata.py
 
 DEVICE = cpu
 
-DATASET = sine
-MODEL = toyregressor
+DATASET = xor
+MODEL = toyclassifier
 
 run:
 	$(PYTHON_INTERPRETER) src/main.py $(mode) \
 		--dataset $(DATASET) \
 		--model_config config/$(MODEL).yml \
-		--optimization_config config/optimization.yml
+		--optimization_config config/optimization_$(MODEL).yml
 
 debug_run:
 	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(main) $(mode) \
 		--dataset $(DATASET) \
 		--model_config config/$(MODEL).yml \
-		--optimization_config config/optimization.yml > debug.log 2>&1 &
+		--optimization_config config/optimization_$(MODEL).yml > debug.log 2>&1 &
 	sleep 1
 	@echo "debugpy ready"
 

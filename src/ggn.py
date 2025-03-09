@@ -22,25 +22,20 @@ def second_derivative_outputs_nll(params, xi, apply_fn):
 
 
 # todo more (memory-)efficient implementation of all of this? :D
-def compute_full_ggn(state, x, w, full_set_size=None):
+def compute_full_ggn(state, x, w, model_type, full_set_size=None):
     flat_params, unravel_fn = flatten_nn_params(state.params)
-    varinv = jnp.exp( - state.params['params']['logvar']) # todo make dependent on loss fun - this is closed form for regression
-    
-    # ! constrain w all terms are nonnegative
-    # w_constrained = jax.nn.softmax(w)
-    # w_constrained = jax.nn.softplus(w)
-    # w_constrained = jnp.ones_like(w) # ! no learned weights
 
     def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
-        return state.apply_fn(p_unr, xi, return_logvar=False)
+        if model_type == "regressor": return state.apply_fn(p_unr, xi, return_logvar=False)
+        else: return state.apply_fn(p_unr, xi)
 
     m = x.shape[0]
     # Initialize GGN as a zero matrix
     GGN = jnp.zeros((flat_params.shape[0], flat_params.shape[0]))
 
     def body_fun(i, acc):
-        xi = x[i]
+        xi = jax.lax.dynamic_index_in_dim(x, i, keepdims=False)
         # Compute the Jacobian for the current inducing point
         J = jax.jacobian(lambda p: model_fun(p, xi))(flat_params)
         # H = second_derivative_outputs_nll(unravel_fn(flat_params), xi, state.apply_fn)
@@ -49,14 +44,21 @@ def compute_full_ggn(state, x, w, full_set_size=None):
         # return acc + w_constrained[i] * ggn_i
         return acc + ggn_i
 
-    GGN = varinv * jax.lax.fori_loop(0, m, body_fun, GGN)
+    GGN = jax.lax.fori_loop(0, m, body_fun, GGN)
+    
+    if model_type == "regressor":
+        # ! Hessian term!
+        # todo make dependent on loss fun - this is closed form for 1D regression
+        varinv = jnp.exp( - state.params['params']['logvar']) 
+        GGN *= varinv
+    
     # GGN = GGN.at[jnp.diag_indices(GGN.shape[0])].add(1e-9) # ! (inefficient?) make always PD
     
     # ! still use recalibration term?
     N = x.shape[0]
     M = full_set_size or N
     GGN *= M / N
-    GGN *= w
+    # GGN *= w
 
     return GGN, flat_params, unravel_fn
     
