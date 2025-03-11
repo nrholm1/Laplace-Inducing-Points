@@ -48,10 +48,10 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
         from src.toydata import plot_binary_classification_data
         plot_binary_classification_data(xtrain, ytrain)
         plot_bc_heatmap(fig, ax, map_model_state, xtrain.min(), xtrain.max())
-        plot_bc_boundary_contour( map_model_state, xtrain.min(), xtrain.max(), color='#3f3', alpha=1.)
+        plot_bc_boundary_contour( map_model_state, xtrain.min(), xtrain.max(), color='#3f3', alpha=1., label='Decision boundary')
         
         
-    plt.legend(loc='lower right')
+    plt.legend(loc='lower right', framealpha=1.0)
     plt.tight_layout()
     os.makedirs("fig", exist_ok=True)
     model_type = f"{model_type}_" if model_type is not None else ""
@@ -59,9 +59,13 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
     plt.savefig(f"fig/{dataset_name}{model_type}map.pdf")
 
 
-def plot_inducing(model_type, map_model_state, xtrain, ytrain, xtest, ytest,
-                  xinit, winit, xinduc, winduc, prior_std, rng_inducing,
-                  model, optimizer_map, m_induc, epochs_induc, dataset_name):
+def plot_inducing(model_type, map_model_state, 
+                  xtrain, ytrain, 
+                  xtest, ytest,
+                  xinduc, winduc, 
+                  prior_std, rng_inducing,
+                  model, optimizer_map, 
+                  m_induc, epochs_induc, dataset_name):
     fig, ax = plt.subplots(figsize=(8, 5))
     plt.title(f"Induced LLA / {m_induc} inducing points, {epochs_induc} steps")
     # plt.title(f"Full LLA / {xtrain.shape[0]} data points")
@@ -74,10 +78,6 @@ def plot_inducing(model_type, map_model_state, xtrain, ytrain, xtest, ytest,
         postpreddist_full = predict_lla(
             map_model_state, xlin, xtrain, jnp.array(1.), model_type=model_type, prior_std=prior_std
         )
-        postpreddist_rand = predict_lla(
-            map_model_state, xlin, xinit, w=winit, model_type=model_type, prior_std=prior_std,
-            full_set_size=xtrain.shape[0]
-        )
         postpreddist_optimized = predict_lla(
             map_model_state, xlin, xinduc, w=winduc, model_type=model_type, prior_std=prior_std,
             full_set_size=xtrain.shape[0]
@@ -85,16 +85,13 @@ def plot_inducing(model_type, map_model_state, xtrain, ytrain, xtest, ytest,
         
         plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
                        text="full", color='orange', zorder=5)
-        # plot_cinterval(xlin.squeeze(), postpreddist_rand.mean(), postpreddist_rand.stddev(), 
-        #                text="ind. init", color='red', zorder=3)
         plot_cinterval(xlin.squeeze(), postpreddist_optimized.mean(), postpreddist_optimized.stddev(), 
-                       text="ind. optimized", color='green', zorder=4)
+                       text="ind. optimized", color='limegreen', zorder=4)
         
         # Plot training and test data
         scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
         scatterp(xtrain, ytrain, zorder=1, label='Train data')
-        plot_inducing_points_1D(ax, xinduc, color='green', offsetp=0.00, zorder=3, label=None)
-        # plot_inducing_points_1D(ax, xinit, color='red', offsetp=0.00, zorder=3, label=None)
+        plot_inducing_points_1D(ax, xinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
 
     elif model_type == "classifier":  # 2D classification case
         postdist, unravel_fn = posterior_lla(
@@ -102,9 +99,9 @@ def plot_inducing(model_type, map_model_state, xtrain, ytrain, xtest, ytest,
             full_set_size=xtrain.shape[0], return_unravel_fn=True
         )
         
-        # Plot the inducing points (optionally, plot initial ones as well)
-        # scatterp(*xinit.T, color="red", zorder=8, marker="+", label='Inducing points (Init)')
-        scatterp(*xinduc.T, color="yellow", zorder=8, marker="+", label='Inducing points')
+        # Plot the inducing points
+        plot_binary_classification_data(xtrain, ytrain)
+        scatterp(*xinduc.T, color="yellow", zorder=8, marker="X", label='Inducing points')
 
         rng_theta_sample = jax.random.fold_in(rng_inducing, 0)
         # Plot multiple boundary contours sampled from the posterior
@@ -116,8 +113,9 @@ def plot_inducing(model_type, map_model_state, xtrain, ytrain, xtest, ytest,
                 params=unravel_fn(theta_sample),
                 tx=optimizer_map
             )
+            label = "Decision boundary samples" if i==0 else None
             plot_bc_boundary_contour(sampled_model_state, xtrain.min(), xtrain.max(),
-                                       color='yellow', alpha=0.5, zorder=6)
+                                       color='yellow', alpha=0.5, zorder=6, label=label)
     
         plot_bc_heatmap(fig, ax, map_model_state, xtrain.min(), xtrain.max())
 
@@ -302,9 +300,12 @@ def main():
     # =========== PART C: Visualization ===========
     if args.mode in ["visualize", "train_inducing", "full_pipeline"]:
         prior_std = alpha_map**(-0.5) # todo verify this?
-        plot_inducing(model_type, map_model_state, xtrain, ytrain, xtest, ytest,
-                  xinit, winit, xinduc, winduc, prior_std, rng_inducing,
-                  model, optimizer_map, m_induc, epochs_induc, args.dataset)
+        plot_inducing(model_type, map_model_state, 
+                      xtrain, ytrain, 
+                      xtest, ytest,
+                      xinduc, winduc, 
+                      prior_std, rng_inducing,
+                      model, optimizer_map, m_induc, epochs_induc, args.dataset)
         print("[DONE] Visualization complete.")
 
 
