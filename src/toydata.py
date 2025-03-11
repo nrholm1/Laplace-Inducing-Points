@@ -33,7 +33,19 @@ def jax_collate_fn(batch):
     y_batch = jnp.stack(y_batch)
     return x_batch, y_batch
 
-def get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=jax_collate_fn):
+
+# todo not completely sure if it works!
+def numpy_collate_fn(batch):
+    if isinstance(batch[0], np.ndarray):
+        return np.stack(batch)
+    elif isinstance(batch[0], (tuple,list)):
+        transposed = zip(*batch)
+        return [numpy_collate_fn(samples) for samples in transposed]
+    else:
+        return np.array(batch)
+
+
+def get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=numpy_collate_fn):
     train_loader = data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     test_loader = data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     return train_loader, test_loader
@@ -61,8 +73,8 @@ def sine_wave_dataset(n, key, noise=0.5, split_in_middle=False):
 def xor_dataset(n, key, noise=0.05):
     zkey, noisekey = jax.random.split(key, 2)
     z = jax.random.uniform(key=zkey, shape=(n,2))
-    x = (z > 0.5).astype(jnp.float32) * 2 - 1
-    y = (x.prod(axis=1) == -1).astype(jnp.float32)
+    x = (z > 0.5).astype(jnp.float32) #* 2 - 1
+    y = (x.sum(axis=1) == 1).astype(jnp.float32).squeeze()
     x += noise * jax.random.normal(key=noisekey, shape=z.shape)
     return x, y
 
@@ -71,6 +83,16 @@ def data_ex5():
     x, y = data['X'], data['y']
     return x, y
 
+def data_mnist_subset_89():
+    data = jnp.load('data/mnist_subset_89.npz')
+    Xtrain = data['Xtrain']
+    Xtest = data['Xtest']
+    ytrain = data['ytrain']
+    ytest = data['ytest']
+    X = jnp.vstack([Xtrain, Xtest])
+    y = jnp.hstack([ytrain, ytest])    
+    return X,y
+
 
 def plot_regression_data(x,y):
     from nplot import scatterp
@@ -78,8 +100,8 @@ def plot_regression_data(x,y):
 
 def plot_binary_classification_data(x,y):
     from nplot import scatterp
-    scatterp(*x[y==0].T, label='Class F', color='salmon')
-    scatterp(*x[y==1].T, label='Class T')
+    scatterp(*x[y==0].T, label='Class 0', color='salmon', zorder=2)
+    scatterp(*x[y==1].T, label='Class 1', zorder=2)
     
 def plot_data(x,y,name,plotf):
     import matplotlib.pyplot as plt
@@ -88,6 +110,7 @@ def plot_data(x,y,name,plotf):
     plotf(x,y)
     plt.legend()
     plt.title(f"{name} dataset")
+    plt.tight_layout()
     os.makedirs("fig", exist_ok=True)
     plt.savefig(f"fig/{name}.pdf")
 

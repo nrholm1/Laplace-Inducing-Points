@@ -4,8 +4,8 @@ import tensorflow_probability.substrates.jax as tfp
 
 from src.ggn import ensure_symmetry, compute_full_ggn
 
-def compute_curvature_approx(map_state, x, prior_std, w, full_set_size=None, return_Hinv=True):
-    GGN, flat_params_map, unravel_fn = compute_full_ggn(map_state, x, w, full_set_size=full_set_size)
+def compute_curvature_approx(map_state, x, prior_std, w, model_type, full_set_size=None, return_Hinv=True):
+    GGN, flat_params_map, unravel_fn = compute_full_ggn(map_state, x, w, model_type=model_type, full_set_size=full_set_size)
     prior_precision = 1.0 / (prior_std**2)
     GGN += prior_precision * jnp.eye(GGN.shape[0])
     # GGN = ensure_symmetry(GGN)  # ! expensive, might not be needed
@@ -16,9 +16,9 @@ def compute_curvature_approx(map_state, x, prior_std, w, full_set_size=None, ret
 
 
 
-def posterior_lla(map_state, prior_std, x, w, full_set_size=None, return_unravel_fn=False):
+def posterior_lla(map_state, prior_std, x, w, model_type, full_set_size=None, return_unravel_fn=False):
     S_approx, flat_params_map, unravel_fn = compute_curvature_approx(
-        map_state, x, prior_std, w, full_set_size=full_set_size, return_Hinv=False
+        map_state, x, prior_std, w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False
     )
 
     posterior_dist = tfp.distributions.MultivariateNormalFullCovariance(
@@ -30,29 +30,32 @@ def posterior_lla(map_state, prior_std, x, w, full_set_size=None, return_unravel
     return posterior_dist
 
 
-def predict_lla(map_state, xnew, x, w, prior_std=1.0, full_set_size=None):
+def predict_lla(map_state, xnew, x, w, model_type, prior_std=1.0, full_set_size=None):
     S_approx, flat_params_map, unravel_fn = compute_curvature_approx(
-        map_state, x, prior_std, w, full_set_size=full_set_size, return_Hinv=False
+        map_state, x, prior_std, w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False
     )
     
     @jax.jit
     def flat_apply_fn(flat_p, inputs):
         p = unravel_fn(flat_p)
-        mu_batched = map_state.apply_fn(p, inputs, return_logvar=False)
+        if model_type=="regressor":
+            mu_batched = map_state.apply_fn(p, inputs, return_logvar=False)
+        else:
+            mu_batched = map_state.apply_fn(p, inputs)
         return mu_batched
     
     @jax.jit
     def per_datum_jacobian(xi):
-        return jax.grad(lambda fp: flat_apply_fn(fp, xi[None]).squeeze())(flat_params_map)
+        return jax.jacobian(lambda fp: flat_apply_fn(fp, xi[None]).squeeze())(flat_params_map)
     
     Jnew = jax.vmap(per_datum_jacobian)(xnew)
-    f_mean = flat_apply_fn(flat_params_map, xnew).squeeze(axis=-1)
+    f_mean = flat_apply_fn(flat_params_map, xnew).squeeze() # ! works properly?
     
     @jax.jit
     def per_datum_cov(Ji):
         return Ji @ S_approx @ Ji.T
     f_cov = jax.vmap(per_datum_cov)(Jnew)
-    f_cov = jnp.diag(f_cov)
+    if model_type == "regressor": f_cov = jnp.diag(f_cov)
     
     assert jnp.all(jnp.linalg.eigvals(f_cov) > 0), "Covariance matrix not PD!"
     

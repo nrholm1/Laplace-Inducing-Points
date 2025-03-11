@@ -1,3 +1,4 @@
+import pdb
 from flax import linen as nn
 import jax
 
@@ -25,11 +26,9 @@ class SimpleClassifier(nn.Module):
     @nn.compact
     def __call__(self, X):
         for _ in range(self.numl):
-            X = nn.gelu(
-                nn.Dense(features = self.numh)(X)
-            )
-        X = nn.Dense(features = self.numc)(X)
-        return nn.softmax(X, axis=1)
+            X = nn.tanh(nn.Dense(features=self.numh)(X))
+        logits = nn.Dense(features=self.numc)(X)
+        return logits
     
     
 count_model_params = lambda params: sum(x.size for x in jax.tree_util.tree_leaves(params))

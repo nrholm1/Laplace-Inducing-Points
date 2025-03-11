@@ -1,13 +1,14 @@
+from functools import partial
 import jax
 import jax.numpy as jnp
 import optax
 from tqdm import tqdm
 
 from lla import posterior_lla, compute_curvature_approx
-from train_map import nl_likelihood_fun
+from train_map import nl_likelihood_fun_regression
 
 
-def sample_params(mu, cov, rng):
+def sample_params(mu, cov, rng, num_samples=1):
     eps = jax.random.normal(rng, shape=mu.shape)
     # Cholesky to map eps ~ N(0,I) -> theta ~ N(mu, cov)
     L = jnp.linalg.cholesky(cov)
@@ -24,7 +25,7 @@ def var_loglik_fun(q, batch, apply_fn, unravel_fn, rng, num_mc_samples):
         rng_i = jax.random.fold_in(rng, i)  # make a fresh key
         theta_sample = sample_params(mu, cov, rng_i)
         theta_sample = unravel_fn(theta_sample)
-        log_p_data = -nl_likelihood_fun(apply_fn, theta_sample, batch) # ! nll, therefore negate it...
+        log_p_data = -nl_likelihood_fun_regression(apply_fn, theta_sample, batch) # ! nll, therefore negate it...
         log_sum += log_p_data
     return log_sum / num_mc_samples
 
@@ -62,15 +63,15 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, full_set
     return - (loglik_term - kl_term) + reg_term
 
 
-def alternative_objective(params, x, state, alpha, full_set_size=None):
+def alternative_objective(params, x, state, alpha, model_type, full_set_size=None):
     # Unpack the parameters: inducing points x and weights w
     xind, w = params
     
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
     # w_fake = jnp.ones_like(dataset[0])
     w_fake = jnp.array(1.)
-    S_full_inv, *_ = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, full_set_size=full_set_size, return_Hinv=True)
-    S_induc,    *_ = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, full_set_size=full_set_size, return_Hinv=False)
+    S_full_inv, *_ = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
+    S_induc,    *_ = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
     
     """
     ========================
@@ -90,8 +91,8 @@ def alternative_objective(params, x, state, alpha, full_set_size=None):
 
 variational_grad = jax.value_and_grad(alternative_objective)
 
-
-def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, full_set_size=None):
+@partial(jax.jit, static_argnames=('model_type', 'xoptimizer', 'num_mc_samples', 'full_set_size'))
+def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, model_type, full_set_size=None):
     loss, grads = variational_grad(
         params, 
         dataset, 
@@ -99,6 +100,7 @@ def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xopti
         alpha, 
         # rng,
         # num_mc_samples=num_mc_samples,
+        model_type=model_type, 
         full_set_size=full_set_size
     )
     updates, new_opt_state = xoptimizer.update(grads, opt_state)
@@ -106,15 +108,7 @@ def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xopti
     return new_params, new_opt_state, loss
 
 
-# ? JIT optimize_step here, since the static_argnames is problematic in the decorator?
-# print("WARNING! optimize_step not JITted for debug")
-optimize_step = jax.jit(optimize_step, static_argnames=['xoptimizer', 'num_mc_samples', 'full_set_size']) # ! not JITted for debug
-
-
-def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader, rng, num_mc_samples, alpha, num_steps):
-    logvar = map_model_state.params['params']['logvar']
-    # todo delete map_model_state.params['params']['logvar'] from params.
-    
+def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps):
     params = (xinit, winit)
     opt_state = xoptimizer.init(params)
     _iter = iter(dataloader)
@@ -133,10 +127,11 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
         sample = (jnp.concatenate(sample[0], axis=0), jnp.concatenate(sample[1], axis=0))
         return sample
     
-    dataset_sample = get_next_sample(num_batches=5)
-    # todo better strategy for enforcing constraints?
-    lb, ub = dataset_sample[0].min(), dataset_sample[0].max()  # ! data support range (1D case)
-    N = len(dataloader) * len(next(iter(dataloader))[0])
+    # ! bounding box for constraining inducing point range
+    dataset_sample = get_next_sample(num_batches=5)[0]
+    lb = dataset_sample.min(axis=0)
+    ub = dataset_sample.max(axis=0)
+    N = len(dataloader) * len(next(iter(dataloader))[0]) # todo take full_set_size as argument instead of this.
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
@@ -150,6 +145,7 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
             alpha, 
             opt_state, 
             rng_step,
+            model_type=model_type,
             xoptimizer=xoptimizer, 
             num_mc_samples=num_mc_samples, 
             full_set_size=N
