@@ -1,3 +1,4 @@
+from functools import partial
 import jax
 import jax.numpy as jnp
 import optax
@@ -90,7 +91,7 @@ def alternative_objective(params, x, state, alpha, model_type, full_set_size=Non
 
 variational_grad = jax.value_and_grad(alternative_objective)
 
-
+@partial(jax.jit, static_argnames=('model_type', 'xoptimizer', 'num_mc_samples', 'full_set_size'))
 def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, model_type, full_set_size=None):
     loss, grads = variational_grad(
         params, 
@@ -105,11 +106,6 @@ def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xopti
     updates, new_opt_state = xoptimizer.update(grads, opt_state)
     new_params = optax.apply_updates(params, updates)
     return new_params, new_opt_state, loss
-
-
-# ? JIT optimize_step here, since the static_argnames is problematic in the decorator?
-# print("WARNING! optimize_step not JITted for debug")
-optimize_step = jax.jit(optimize_step, static_argnames=['model_type', 'xoptimizer', 'num_mc_samples', 'full_set_size']) # ! not JITted for debug
 
 
 def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps):
@@ -131,10 +127,11 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
         sample = (jnp.concatenate(sample[0], axis=0), jnp.concatenate(sample[1], axis=0))
         return sample
     
-    dataset_sample = get_next_sample(num_batches=5)
-    # todo better strategy for enforcing constraints?
-    lb, ub = dataset_sample[0].min(), dataset_sample[0].max()  # ! data support range (1D case)
-    N = len(dataloader) * len(next(iter(dataloader))[0])
+    # ! bounding box for constraining inducing point range
+    dataset_sample = get_next_sample(num_batches=5)[0]
+    lb = dataset_sample.min(axis=0)
+    ub = dataset_sample.max(axis=0)
+    N = len(dataloader) * len(next(iter(dataloader))[0]) # todo take full_set_size as argument instead of this.
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
