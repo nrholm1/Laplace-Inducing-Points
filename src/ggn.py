@@ -58,7 +58,7 @@ def compute_full_ggn(state, x, w, model_type, full_set_size=None):
     N = x.shape[0]
     M = full_set_size or N
     GGN *= M / N
-    # GGN *= w
+    GGN *= w
 
     return GGN, flat_params, unravel_fn
     

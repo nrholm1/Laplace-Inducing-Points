@@ -235,7 +235,12 @@ def main():
         )
         
         # ? visualize MAP estimator
-        plot_map(map_model_state, (xtrain, ytrain), (xtest, ytest), alpha_map, model_type=model_type, dataset_name=args.dataset)
+        plot_map(map_model_state, 
+                 (xtrain, ytrain), 
+                 (xtest, ytest), 
+                 alpha_map, 
+                 model_type=model_type, 
+                 dataset_name=args.dataset)
         
         if args.mode == "train_map":
             print("[DONE] MAP training only.")
@@ -251,20 +256,16 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    # xinit = xtrain
     # xinit = jnp.linspace(xtrain.min(), xtrain.max(), m_induc)[:,None]
     # xinit = jax.random.uniform(rng_inducing, shape=(m_induc,1)) * (xtrain.max() - xtrain.min()) - (jnp.abs(xtrain.min()))
     # xinit = jax.random.uniform(rng_inducing, shape=(m_induc,2)) * (xtrain.max() - xtrain.min()) - (jnp.abs(xtrain.min()))
     m_induc = min(m_induc, len(test_dataset))
     _, test_loader = get_dataloaders(train_dataset, test_dataset, m_induc)
     xinit = next(iter(test_loader))[0]
-    winit = jnp.ones_like(xinit)
     winit = jnp.array(1.)
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         xoptimizer = optax.adam(lr_induc)
-        # print("WARNING! Training inducing with full dataset!")
-        # train_loader, _ = get_dataloaders(train_dataset, test_dataset, len(train_dataset))
         
         xinduc,winduc = train_inducing_points(
             map_model_state, 
@@ -276,24 +277,37 @@ def main():
             model_type=model_type,
             num_mc_samples=mc_samples,
             alpha=alpha_induc,
-            num_steps=epochs_induc
+            num_steps=epochs_induc,
+            full_set_size=xtrain.shape[0],
         )
 
-        # todo also save w!
+        # Save both the inducing points (xinduc) and the weights (winduc)
         save_array_checkpoint(
             array=xinduc,
             ckpt_dir=args.ckpt_induc,
-            name=induc_ckpt_name,
+            name=induc_ckpt_name + "_x",
             step=epochs_induc
         )
+        save_array_checkpoint(
+            array=winduc,
+            ckpt_dir=args.ckpt_induc,
+            name=induc_ckpt_name + "_w",
+            step=epochs_induc
+        )
+    
         if args.mode == "train_inducing":
             print("[DONE] Inducing training only.")
             # return # ! don't return, visualize
     else:
-        # todo also load w!
+        # Load both the inducing points (xinduc) and the weights (winduc)
         xinduc = load_array_checkpoint(
             ckpt_dir=args.ckpt_induc,
-            name=induc_ckpt_name,
+            name=induc_ckpt_name + "_x",
+            step=epochs_induc
+        )
+        winduc = load_array_checkpoint(
+            ckpt_dir=args.ckpt_induc,
+            name=induc_ckpt_name + "_w",
             step=epochs_induc
         )
 
@@ -305,7 +319,9 @@ def main():
                       xtest, ytest,
                       xinduc, winduc, 
                       prior_std, rng_inducing,
-                      model, optimizer_map, m_induc, epochs_induc, args.dataset)
+                      model, optimizer_map, 
+                      m_induc, epochs_induc, 
+                      dataset_name=args.dataset)
         print("[DONE] Visualization complete.")
 
 

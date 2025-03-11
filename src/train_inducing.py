@@ -91,6 +91,7 @@ def alternative_objective(params, x, state, alpha, model_type, full_set_size=Non
 
 variational_grad = jax.value_and_grad(alternative_objective)
 
+
 @partial(jax.jit, static_argnames=('model_type', 'xoptimizer', 'num_mc_samples', 'full_set_size'))
 def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, model_type, full_set_size=None):
     loss, grads = variational_grad(
@@ -108,7 +109,7 @@ def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xopti
     return new_params, new_opt_state, loss
 
 
-def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps):
+def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size):
     params = (xinit, winit)
     opt_state = xoptimizer.init(params)
     _iter = iter(dataloader)
@@ -131,7 +132,6 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
     dataset_sample = get_next_sample(num_batches=5)[0]
     lb = dataset_sample.min(axis=0)
     ub = dataset_sample.max(axis=0)
-    N = len(dataloader) * len(next(iter(dataloader))[0]) # todo take full_set_size as argument instead of this.
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
@@ -148,7 +148,7 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
             model_type=model_type,
             xoptimizer=xoptimizer, 
             num_mc_samples=num_mc_samples, 
-            full_set_size=N
+            full_set_size=full_set_size
         )
         # Unpack parameters:
         x, w = params
