@@ -17,7 +17,7 @@ class Colors(str, Enum):
     yellow = '#FFBB00'
     darkgray = '#333'
     
-def plot_bc_boundary_heatmap(fig, ax, map_model_state, tmin, tmax, sharp_boundary=False):
+def plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax, sharp_boundary=False):
     cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", [Colors.paleblue, 'salmon'])
     t = jnp.linspace(tmin, tmax, 100)
     X,Y = jnp.meshgrid(t, t, indexing='ij')
@@ -28,7 +28,8 @@ def plot_bc_boundary_heatmap(fig, ax, map_model_state, tmin, tmax, sharp_boundar
     # co = plt.contourf(X, Y, preds, levels=100, cmap=cmap, alpha=0.5)
     co = plt.contourf(X, Y, preds, levels=100, cmap=cmap, alpha=1.)
     
-    fig.colorbar(co, ax=ax)
+    cbar = fig.colorbar(co, ax=ax)
+    cbar.set_label("prediction probability")
     
     
 def plot_bc_boundary_contour(map_model_state, tmin, tmax, alpha=0.2, color="black",zorder=5):

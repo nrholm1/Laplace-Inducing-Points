@@ -110,6 +110,7 @@ def plot_data(x,y,name,plotf):
     plotf(x,y)
     plt.legend()
     plt.title(f"{name} dataset")
+    plt.tight_layout()
     os.makedirs("fig", exist_ok=True)
     plt.savefig(f"fig/{name}.pdf")
 
