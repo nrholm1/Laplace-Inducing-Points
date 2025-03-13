@@ -5,9 +5,11 @@ import jax.numpy as jnp
 from src.utils import flatten_nn_params
 
 
+def compute_ggn_vp(state, x, w, model_type, full_set_size=None):
+    ...
 
-# todo more (memory-)efficient implementation of all of this? :D
-def compute_full_ggn(state, x, w, model_type, loss_fn=None, full_set_size=None):
+
+def compute_full_ggn(state, x, w, model_type, full_set_size=None):
     flat_params, unravel_fn = flatten_nn_params(state.params)
 
     def model_fun(flatp, xi):
@@ -23,19 +25,14 @@ def compute_full_ggn(state, x, w, model_type, loss_fn=None, full_set_size=None):
     def body_fun(i, acc):
         xi = jax.lax.dynamic_index_in_dim(x, i, keepdims=False)
         J = jax.jacobian(lambda p: model_fun(p, xi))(flat_params)
-        if loss_fn is not None:
+        if model_type == "classifier":
+            # todo make dependent on loss fun - this is closed form for classification
             fxi = model_fun(flat_params, xi)
-            H_loss = jax.hessian(loss_fn)(fxi)
+            probs = jax.nn.softmax(fxi)
+            H_loss = jnp.diag(probs) - jnp.outer(probs, probs)
             ggn_i = J.T @ H_loss @ J
         else:
-            if model_type == "classifier":
-                # todo make dependent on loss fun - this is closed form for classification
-                fxi = model_fun(flat_params, xi)
-                probs = jax.nn.softmax(fxi)
-                H_loss = jnp.diag(probs) - jnp.outer(probs, probs)
-                ggn_i = J.T @ H_loss @ J
-            else:
-                ggn_i = J.T @ J
+            ggn_i = J.T @ J
         return acc + ggn_i
 
     GGN = jax.lax.fori_loop(0, m, body_fun, GGN)
