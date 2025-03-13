@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import jax.flatten_util
 
-from src.ggn import compute_full_ggn
+from src.ggn import compute_full_ggn, compute_ggn_vp
 from src.utils import is_pd
 from fixtures import regression_1d_data, small_model_state
 
@@ -82,3 +82,19 @@ def test_full_ggn_pd(regression_1d_data, small_model_state):
     GGN, *_ = compute_full_ggn(state, X, w, model_type="regressor")
 
     assert is_pd(GGN), "GGN is not positive definite!"
+    
+
+# Test #4: GGN vector product and identity matrix gives full GGN
+def test_ggnvp_I_vs_full_ggn(regression_1d_data, small_model_state):
+    """
+    1) Compute GGN using GGNvp(I),
+    2) Compute full GGN,
+    3) Compare them.
+    """
+    X, y = regression_1d_data
+    state = small_model_state    
+    w = jnp.array(1.) # jnp.ones((X.shape[0],))
+    v = jnp.identity(X.shape[0])
+
+    GGN_vp, *_ = compute_ggn_vp(state, X, w, v, model_type="regressor")
+    full_GGN, *_ = compute_full_ggn(state, X, w, model_type="regressor")
