@@ -29,7 +29,7 @@ def plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax, sharp_boundary=False):
     co = plt.contourf(X, Y, preds, levels=100, cmap=cmap, alpha=1.)
     
     cbar = fig.colorbar(co, ax=ax)
-    cbar.set_label("prediction probability")
+    cbar.set_label(r"$θ_{MAP}$ prediction probability")
     
     
 def plot_bc_boundary_contour(map_model_state, tmin, tmax, alpha=0.2, color="black",zorder=5, label=None):
