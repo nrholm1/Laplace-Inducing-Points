@@ -3,7 +3,7 @@ import yaml
 import numpy as np
 import jax
 import jax.numpy as jnp
-from flax.training import train_state, checkpoints
+from flax.training import checkpoints
 import jax.flatten_util
 
 is_pd = lambda M: jnp.all(jnp.linalg.eigvals(M) >= 1e-9)

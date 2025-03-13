@@ -6,7 +6,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax.training import train_state
-from flax.core import freeze, unfreeze
 import optax
 
 import matplotlib.pyplot as plt
@@ -18,7 +17,7 @@ from toydata import JAXDataset, get_dataloaders, plot_binary_classification_data
 from nplot import plot_bc_boundary_contour, plot_bc_heatmap, scatterp, linep, plot_cinterval, plot_inducing_points_1D
 
 from train_map import train_map
-from train_inducing import train_inducing_points, sample_params
+from train_inducing import train_inducing_points
 from lla import posterior_lla, predict_lla
 from utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint
     
@@ -43,13 +42,11 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
                         text="full", color='orange', zorder=5)
         scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
         scatterp(xtrain, ytrain, zorder=1, label='Train data')
-        
     elif model_type == "classifier":
         from src.toydata import plot_binary_classification_data
         plot_binary_classification_data(xtrain, ytrain)
         plot_bc_heatmap(fig, ax, map_model_state, xtrain.min(), xtrain.max())
         plot_bc_boundary_contour( map_model_state, xtrain.min(), xtrain.max(), color='#3f3', alpha=1., label='Decision boundary')
-        
         
     plt.legend(loc='lower right', framealpha=1.0)
     plt.tight_layout()
@@ -100,7 +97,7 @@ def plot_inducing(model_type, map_model_state,
         )
         
         # Plot the inducing points
-        plot_binary_classification_data(xtrain, ytrain)
+        # plot_binary_classification_data(xtrain, ytrain)
         scatterp(*xinduc.T, color="yellow", zorder=8, marker="X", label='Inducing points')
 
         rng_theta_sample = jax.random.fold_in(rng_inducing, 0)

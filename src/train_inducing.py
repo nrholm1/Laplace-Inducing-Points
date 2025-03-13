@@ -42,7 +42,7 @@ def var_kl_fun(q, alpha):
     return kl_term
 
 
-def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, full_set_size=None, reg_coeff=0):
+def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, model_type, full_set_size=None, reg_coeff=0):
     # Unpack the parameters: inducing points x and weights w
     x, w = params
 
@@ -51,7 +51,7 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, full_set
         prior_std=alpha,# todo correct alpha used here?
         x=x,
         w=w,
-        y=None,  # ? explicitly pass no labels
+        model_type=model_type,
         full_set_size=full_set_size,
         return_unravel_fn=True
     )
@@ -75,7 +75,7 @@ def alternative_objective(params, x, state, alpha, model_type, full_set_size=Non
     
     """
     ========================
-    Compute KL[ q || qfull ]
+    Compute KL[ q(theta|Z) || p(theta|data) ]
     ========================
     """
     trace_term = jnp.linalg.trace(S_full_inv @ S_induc)
@@ -89,6 +89,7 @@ def alternative_objective(params, x, state, alpha, model_type, full_set_size=Non
     D = 0 # todo const - does it matter for optimization?
     return 0.5 * (trace_term - D + log_det_term)
 
+# variational_grad = jax.value_and_grad(naive_objective)
 variational_grad = jax.value_and_grad(alternative_objective)
 
 
@@ -141,6 +142,7 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
         params, opt_state, loss = optimize_step(
             params, 
             x_sample, 
+            # dataset_sample, # for naive_objective
             map_model_state, 
             alpha, 
             opt_state, 

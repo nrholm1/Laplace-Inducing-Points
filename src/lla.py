@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax as tfp
 
-from src.ggn import ensure_symmetry, compute_full_ggn
+from src.ggn import compute_full_ggn
 
 def compute_curvature_approx(map_state, x, prior_std, w, model_type, full_set_size=None, return_Hinv=True):
     GGN, flat_params_map, unravel_fn = compute_full_ggn(map_state, x, w, model_type=model_type, full_set_size=full_set_size)
