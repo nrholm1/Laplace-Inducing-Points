@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from src.stochtrace import stochastic_trace_estimator_full, stochastic_trace_estimator_full_2, stochastic_trace_estimator_full_3, stochastic_trace_estimator_jvp
+from src.stochtrace import stochastic_trace_estimator_full, hutchpp_dense, na_hutchpp_dense, hutchpp_mvp, na_hutchpp_mvp
 
 jax.config.update("jax_enable_x64", True)
 
@@ -31,7 +31,7 @@ def matrix_test_suite():
 
 
 
-def test_stochtrace_full_simple(matrix_test_suite):
+def test_hutchinson_dense(matrix_test_suite):
     M1,M2,M3 = matrix_test_suite
     seed = jax.random.PRNGKey(seed=2894598)
     
@@ -48,56 +48,74 @@ def test_stochtrace_full_simple(matrix_test_suite):
     assert jnp.isclose(tr3_approx, tr3_exact, rtol=1e-2), f"Error for M3. True:{tr3_exact:.2f}, Approx.:{tr3_approx:.2f}"
     
     
-def test_stochtrace_full(matrix_test_suite):
+def test_hutchpp_dense(matrix_test_suite):
     M1,M2,M3 = matrix_test_suite
     seed = jax.random.PRNGKey(seed=2894598)
     
-    tr1_approx = stochastic_trace_estimator_full_2(M1, seed, num_samples=3)
+    tr1_approx = hutchpp_dense(M1, seed, num_samples=3)
     tr1_exact  = jnp.trace(M1)
     assert jnp.isclose(tr1_approx, tr1_exact, rtol=1e-2),f"Error for M1. True:{tr1_exact:.2f}, Approx.:{tr1_approx:.2f}"
     
-    tr2_approx = stochastic_trace_estimator_full_2(M2, seed, num_samples=3)
+    tr2_approx = hutchpp_dense(M2, seed, num_samples=3)
     tr2_exact  = jnp.trace(M2)
     assert jnp.isclose(tr2_approx, tr2_exact, rtol=1e-2), f"Error for M2. True:{tr2_exact:.2f}, Approx.:{tr2_approx:.2f}"
     
-    tr3_approx = stochastic_trace_estimator_full_2(M3, seed, num_samples=10)
+    tr3_approx = hutchpp_dense(M3, seed, num_samples=10)
     tr3_exact  = jnp.trace(M3)
     assert jnp.isclose(tr3_approx, tr3_exact, rtol=1e-2), f"Error for M3. True:{tr3_exact:.2f}, Approx.:{tr3_approx:.2f}"
     
 
-def test_stochtrace_jvp(matrix_test_suite):
+def test_hutchpp_mvp(matrix_test_suite):
     M1,M2,M3 = matrix_test_suite
     seed = jax.random.PRNGKey(seed=2894598)
     
     
     M1fun = lambda v: M1@v
-    tr1_approx = stochastic_trace_estimator_jvp(M1fun, M1.shape[0], seed, num_samples=3)
+    tr1_approx = hutchpp_mvp(M1fun, M1.shape[0], seed, num_samples=3)
     tr1_exact  = jnp.trace(M1)
     assert jnp.isclose(tr1_approx, tr1_exact, rtol=1e-2), f"Error for M1. True:{tr1_exact:.2f}, Approx.:{tr1_approx:.2f}"
     
     M2fun = lambda v: M2@v
-    tr2_approx = stochastic_trace_estimator_jvp(M2fun, M2.shape[0], seed, num_samples=3)
+    tr2_approx = hutchpp_mvp(M2fun, M2.shape[0], seed, num_samples=3)
     tr2_exact  = jnp.trace(M2)
     assert jnp.isclose(tr2_approx, tr2_exact, rtol=1e-2), f"Error for M2. True:{tr2_exact:.2f}, Approx.:{tr2_approx:.2f}"
     
     M3fun = lambda v: M3@v
-    tr3_approx = stochastic_trace_estimator_jvp(M3fun, M3.shape[0], seed, num_samples=10)
+    tr3_approx = hutchpp_mvp(M3fun, M3.shape[0], seed, num_samples=10)
     tr3_exact  = jnp.trace(M3)
     assert jnp.isclose(tr3_approx, tr3_exact, rtol=1e-2), f"Error for M3. True:{tr3_exact:.2f}, Approx.:{tr3_approx:.2f}"
     
 
-def test_na_stochtrace_full(matrix_test_suite):
+def test_na_hutchpp_dense(matrix_test_suite):
     M1,M2,M3 = matrix_test_suite
     seed = jax.random.PRNGKey(seed=2894598)
     
-    tr1_approx = stochastic_trace_estimator_full_3(M1, seed, num_samples=3)
+    tr1_approx = na_hutchpp_dense(M1, seed, num_samples=3)
     tr1_exact  = jnp.trace(M1)
     assert jnp.isclose(tr1_approx, tr1_exact, rtol=1e-2),f"Error for M1. True:{tr1_exact:.2f}, Approx.:{tr1_approx:.2f}"
     
-    tr2_approx = stochastic_trace_estimator_full_3(M2, seed, num_samples=3)
+    tr2_approx = na_hutchpp_dense(M2, seed, num_samples=3)
     tr2_exact  = jnp.trace(M2)
     assert jnp.isclose(tr2_approx, tr2_exact, rtol=1e-2), f"Error for M2. True:{tr2_exact:.2f}, Approx.:{tr2_approx:.2f}"
     
-    tr3_approx = stochastic_trace_estimator_full_3(M3, seed, num_samples=50)
+    tr3_approx = na_hutchpp_dense(M3, seed, num_samples=50)
+    tr3_exact  = jnp.trace(M3)
+    assert jnp.isclose(tr3_approx, tr3_exact, rtol=1e-2), f"Error for M3. True:{tr3_exact:.2f}, Approx.:{tr3_approx:.2f}"
+
+
+def test_na_hutchpp_mvp(matrix_test_suite):
+    # todo
+    M1,M2,M3 = matrix_test_suite
+    seed = jax.random.PRNGKey(seed=2894598)
+    
+    tr1_approx = na_hutchpp_mvp(M1, seed, num_samples=3)
+    tr1_exact  = jnp.trace(M1)
+    assert jnp.isclose(tr1_approx, tr1_exact, rtol=1e-2),f"Error for M1. True:{tr1_exact:.2f}, Approx.:{tr1_approx:.2f}"
+    
+    tr2_approx = na_hutchpp_mvp(M2, seed, num_samples=3)
+    tr2_exact  = jnp.trace(M2)
+    assert jnp.isclose(tr2_approx, tr2_exact, rtol=1e-2), f"Error for M2. True:{tr2_exact:.2f}, Approx.:{tr2_approx:.2f}"
+    
+    tr3_approx = na_hutchpp_mvp(M3, seed, num_samples=50)
     tr3_exact  = jnp.trace(M3)
     assert jnp.isclose(tr3_approx, tr3_exact, rtol=1e-2), f"Error for M3. True:{tr3_exact:.2f}, Approx.:{tr3_approx:.2f}"
