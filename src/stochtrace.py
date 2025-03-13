@@ -5,7 +5,7 @@ import jax.numpy as jnp
 def stochastic_trace_estimator_full(X, seed, num_samples=1_000):
     """
     Uses Girard-Hutchinson estimator on fully instantiated matrices.
-    # ! quite unstable! Bug?
+    # ! quite unstable! Bug or just slow MSE convergence?
     """
     def sample_eps(X, seed, num_samples): 
         return jax.random.rademacher(key=seed, shape=(num_samples, X.shape[0]))
@@ -31,8 +31,6 @@ def hutchpp_dense(X, seed, num_samples=10):
     orthproj = (jnp.eye(Q.shape[0]) - Q@Q.T) # symmetric
     
     return jnp.trace(Q.T@X@Q) + (1/num_samples) * jnp.trace(G@orthproj@X@orthproj@G.T)
-
-
 
 
 def hutchpp_mvp(Xfun, D, seed, num_samples=10):
@@ -79,7 +77,6 @@ def na_hutchpp_dense(X, seed, num_samples=10):
 
 
 def na_hutchpp_mvp(Xfun, D, seed, num_samples=10):
-    # todo
     """
     Uses NA-Hutch++ with linear operator oracle function.
     - `Xfun`: oracle computing v -> X@v, where X: square matrix
@@ -87,13 +84,13 @@ def na_hutchpp_mvp(Xfun, D, seed, num_samples=10):
     """
     c1,c2,c3 = .25,.5,.25 # good values, given in Hutch++ paper.
     # ? Sample isotropic random vectors, either from N(0,I) or with Rademacher dist. (unif{-1,+1} indices)
-    eps = jax.random.rademacher(key=seed, shape=(num_samples * 4, X.shape[0]))
-    # eps = jax.random.normal(key=seed, shape=(num_samples * 4, X.shape[0])) 
+    eps = jax.random.rademacher(key=seed, shape=(num_samples * 4, D))
+    # eps = jax.random.normal(key=seed, shape=(num_samples * 4, D)) 
     S,R,G = jnp.split(eps, [num_samples, num_samples*3], axis=0) # split into [1/4, 2/4, 1/4]
-    W = X @ S.T
-    Z = X @ R.T
+    W = Xfun(S.T)
+    Z = Xfun(R.T)
     
-    return jnp.trace(jnp.linalg.pinv(S@Z) @ (W.T@Z)) + (1/(c3*4*num_samples)) * (jnp.trace(G@X@G.T) - jnp.trace(G@Z@jnp.linalg.pinv(S@Z)@W.T@G.T))
+    return jnp.trace(jnp.linalg.pinv(S@Z) @ (W.T@Z)) + (1/(c3*4*num_samples)) * (jnp.trace(G@Xfun(G.T)) - jnp.trace(G@Z@jnp.linalg.pinv(S@Z)@W.T@G.T))
 
 
 # todo could also implement XTrace? Seems to not be a better choice for our case, so defer...
