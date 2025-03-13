@@ -8,7 +8,6 @@ from src.lla import compute_curvature_approx, posterior_lla, predict_lla
 from fixtures import small_model_state, regression_1d_data
 
 
-
 def test_posterior_lla(small_model_state, regression_1d_data):
     prior_std = 1.0
     X, y = regression_1d_data
@@ -49,3 +48,8 @@ def test_predict_lla(small_model_state, regression_1d_data):
     cov_pred = pred_dist.covariance()
     eigvals = jnp.linalg.eigvals(cov_pred)
     assert jnp.all(eigvals > 0)
+    
+    
+def test_predict_lla_jvp(small_model_state, regression_1d_data):
+    # todo
+    ...

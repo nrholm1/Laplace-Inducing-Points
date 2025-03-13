@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import jax.flatten_util
 
-from src.ggn import compute_full_ggn, compute_ggn_vp
+from src.ggn import compute_ggn_dense, compute_ggn_vp
 from src.utils import is_pd
 from fixtures import regression_1d_data, small_model_state
 
@@ -29,7 +29,7 @@ def test_full_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
     # Compute GGN using the provided function.
-    GGN, *_ = compute_full_ggn(state, X, w, model_type="regressor")
+    GGN, *_ = compute_ggn_dense(state, X, w, model_type="regressor")
 
     flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params)
 
@@ -62,7 +62,7 @@ def test_full_ggn_shape(regression_1d_data, small_model_state):
     w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
     # Call the updated compute_ggn with x, w, and y.
-    GGN, flat_params, unravel_fn = compute_full_ggn(state, X, w, model_type="regressor")
+    GGN, flat_params, unravel_fn = compute_ggn_dense(state, X, w, model_type="regressor")
     assert GGN.shape[0] == GGN.shape[1], "GGN must be square"
     assert GGN.shape[0] == flat_params.shape[0], (
         f"GGN shape {GGN.shape} does not match #params {flat_params.shape}"
@@ -79,7 +79,7 @@ def test_full_ggn_pd(regression_1d_data, small_model_state):
     state = small_model_state    
     w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
-    GGN, *_ = compute_full_ggn(state, X, w, model_type="regressor")
+    GGN, *_ = compute_ggn_dense(state, X, w, model_type="regressor")
 
     assert is_pd(GGN), "GGN is not positive definite!"
     
@@ -97,4 +97,6 @@ def test_ggnvp_I_vs_full_ggn(regression_1d_data, small_model_state):
     v = jnp.identity(X.shape[0])
 
     GGN_vp, *_ = compute_ggn_vp(state, X, w, v, model_type="regressor")
-    full_GGN, *_ = compute_full_ggn(state, X, w, model_type="regressor")
+    full_GGN, *_ = compute_ggn_dense(state, X, w, model_type="regressor")
+    
+    assert jnp.isclose(GGN_vp, full_GGN, atol=1e-8), "GGNs don't match!"
