@@ -3,9 +3,18 @@ import jax
 import jax.numpy as jnp
 import jax.flatten_util
 
-from src.ggn import compute_full_ggn, per_sample_nll
+from src.ggn import compute_full_ggn
 from src.utils import is_pd
 from fixtures import regression_1d_data, small_model_state
+
+def per_sample_regression_nll(params, xi, yi, apply_fn):
+    """# ! Closed form NLL for regression - returns a scalar."""
+    mu, logvar = apply_fn(params, xi)
+    return 0.5 * (
+        jnp.log(2.0 * jnp.pi * jnp.exp(logvar)) +
+        (yi - mu) ** 2 / jnp.exp(logvar)
+    ).squeeze()
+
 
 # Test #1: GGN vs jax Hessian for a known tiny model
 def test_full_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
@@ -27,7 +36,7 @@ def test_full_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     # Define the total negative log-likelihood over the dataset.
     def total_nll(flatp):
         p_unr = unravel_fn(flatp)
-        nll_vals = jax.vmap(lambda xi, yi: per_sample_nll(p_unr, xi, yi, state.apply_fn))(X, y)
+        nll_vals = jax.vmap(lambda xi, yi: per_sample_regression_nll(p_unr, xi, yi, state.apply_fn))(X, y)
         return jnp.sum(nll_vals)
     
     # Compute the full Hessian via jax.hessian.
