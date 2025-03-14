@@ -4,8 +4,8 @@ import jax.numpy as jnp
 import jax.flatten_util
 
 from src.ggn import compute_ggn_dense, compute_ggn_vp
-from src.utils import is_pd
-from fixtures import regression_1d_data, small_model_state
+from src.utils import flatten_nn_params, is_pd
+from fixtures import regression_1d_data, small_model_state, classifier_state, classification_2d_data
 
 def per_sample_regression_nll(params, xi, yi, apply_fn):
     """# ! Closed form NLL for regression - returns a scalar."""
@@ -94,9 +94,41 @@ def test_ggnvp_I_vs_full_ggn(regression_1d_data, small_model_state):
     X, y = regression_1d_data
     state = small_model_state    
     w = jnp.array(1.) # jnp.ones((X.shape[0],))
-    v = jnp.identity(X.shape[0])
+    I = jnp.identity(2)
 
-    GGN_vp, *_ = compute_ggn_vp(state, X, w, v, model_type="regressor")
+    
+    GGN_vp_fun = compute_ggn_vp(state, X, w, model_type="regressor")
+    mf_GGN = jax.vmap(GGN_vp_fun, in_axes=1, out_axes=1)(I) # Matrix Free GGN
     full_GGN, *_ = compute_ggn_dense(state, X, w, model_type="regressor")
     
-    assert jnp.isclose(GGN_vp, full_GGN, atol=1e-8), "GGNs don't match!"
+    assert jnp.all(jnp.isclose(mf_GGN, full_GGN, atol=1e-8)), "GGNs don't match!"
+    
+
+# Test #5: GGN vector product and identity matrix gives full GGN for 2D input space classifier
+def test_ggnvp_I_vs_full_ggn_classifier(classification_2d_data, classifier_state):
+    """
+    Test for a classifier model:
+    1) Compute GGN using the matrix-free oracle on the identity matrix,
+    2) Compute the full dense GGN,
+    3) Assert that they match up to a numerical tolerance.
+    
+    Args:
+        classifier_data: A tuple (X, y) for the classifier.
+        small_classifier_state: A state object with state.params and state.apply_fn
+                                from a classifier (e.g., initialized via SimpleClassifier).
+    """
+    X, y = classification_2d_data
+    state = classifier_state    
+    w = jnp.array(1.)  # Global recalibration parameter
+
+    # Obtain the dimension of the flattened parameter space.
+    flat_params, _ = flatten_nn_params(state.params)
+    d = flat_params.shape[0]
+    I = jnp.eye(d)
+
+    GGN_vp_fun = compute_ggn_vp(state, X, w, model_type="classifier") # Build the matrix–free GGN vector product oracle.    
+    mf_GGN = jax.vmap(GGN_vp_fun, in_axes=1, out_axes=1)(I) # apply the oracle to each column of I.
+    
+    full_GGN, *_ = compute_ggn_dense(state, X, w, model_type="classifier")
+
+    assert jnp.all(jnp.isclose(mf_GGN, full_GGN, atol=1e-6)), "GGNs don't match for classifier!"

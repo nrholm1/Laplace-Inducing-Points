@@ -13,10 +13,10 @@ def test_posterior_lla(small_model_state, regression_1d_data):
     X, y = regression_1d_data
     w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
-    post_dist = posterior_lla(small_model_state, prior_std, X, w, model_type="regressor")
+    post_dist = posterior_lla(small_model_state, X, w, prior_std=prior_std, model_type="regressor")
     
     _, flat_params_map, _ = compute_curvature_approx(
-        small_model_state, X, prior_std, w, model_type="regressor", return_Hinv=False
+        small_model_state, X, w, prior_std=prior_std, model_type="regressor", return_Hinv=False
     )
     np.testing.assert_allclose(post_dist.mean(), flat_params_map, rtol=1e-4, atol=1e-6)
     
@@ -35,7 +35,7 @@ def test_predict_lla(small_model_state, regression_1d_data):
     
     # Compute the predictive mean using the MAP parameters.
     cov, flat_params_map, unravel_fn = compute_curvature_approx(
-        small_model_state, X, prior_std, w, model_type="regressor", return_Hinv=False
+        small_model_state, X, w, prior_std=prior_std, model_type="regressor", return_Hinv=False
     )
     
     def flat_apply_fn(flat_p, inputs):

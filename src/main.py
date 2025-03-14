@@ -92,7 +92,7 @@ def plot_inducing(model_type, map_model_state,
 
     elif model_type == "classifier":  # 2D classification case
         postdist, unravel_fn = posterior_lla(
-            map_model_state, prior_std, xinduc, w=winduc, model_type=model_type,
+            map_model_state, xinduc, w=winduc, model_type=model_type, prior_std=prior_std,
             full_set_size=xtrain.shape[0], return_unravel_fn=True
         )
         
