@@ -1,3 +1,4 @@
+from functools import partial
 import jax
 import jax.numpy as jnp
 
@@ -48,6 +49,7 @@ def hutchpp_mvp(Xfun, D, seed, num_samples=10):
     Q,R = jnp.linalg.qr(Xfun(S.T))
     orthproj = (jnp.eye(Q.shape[0]) - Q@Q.T) # symmetric
     
+    @jax.jit
     def quad_term(M):
         """
         Compute M^T X M
@@ -59,6 +61,19 @@ def hutchpp_mvp(Xfun, D, seed, num_samples=10):
     estimates = jnp.trace(quad_term(Q)) + (1/num_samples) * jnp.trace(quad_term(orthproj@G.T))
     
     return estimates.mean()
+
+
+def hutchpp_inv_mvp(Xfun, D, seed, num_samples=10):
+    """
+    Uses Conjugate Gradient on Hutch++ with linear operator oracle function to approximate the trace of the inverse.
+    - `Xfun`: oracle computing v -> X@v, where X: square matrix
+    - `D`: int, dim(X)
+    """
+    @jax.jit
+    def Xinvfun(v):
+        x,info = jax.scipy.sparse.linalg.cg(A=Xfun, b=v)
+        return x
+    return hutchpp_mvp(Xinvfun, D, seed, num_samples=num_samples)
 
 
 def na_hutchpp_dense(X, seed, num_samples=10):
@@ -91,6 +106,20 @@ def na_hutchpp_mvp(Xfun, D, seed, num_samples=10):
     Z = Xfun(R.T)
     
     return jnp.trace(jnp.linalg.pinv(S@Z) @ (W.T@Z)) + (1/(c3*4*num_samples)) * (jnp.trace(G@Xfun(G.T)) - jnp.trace(G@Z@jnp.linalg.pinv(S@Z)@W.T@G.T))
+
+
+def na_hutchpp_inv_mvp(Xfun, D, seed, num_samples=10):
+    """
+    Uses Conjugate Gradient on NA-Hutch++ with linear operator oracle function to approximate the trace of the inverse.
+    - `Xfun`: oracle computing v -> X@v, where X: square matrix
+    - `D`: int, dim(X)
+    """
+    @jax.jit
+    def Xinvfun(v):
+        v = v.astype(jnp.float64)
+        x,info = jax.scipy.sparse.linalg.cg(A=Xfun, b=v)
+        return x
+    return na_hutchpp_mvp(Xinvfun, D, seed, num_samples=num_samples)
 
 
 # todo could also implement XTrace? Seems to not be a better choice for our case, so defer...
