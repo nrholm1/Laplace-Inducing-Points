@@ -85,7 +85,10 @@ def alternative_objective_scalable(params, x, state, alpha, model_type, seed, fu
     @jax.jit
     def composite_vp(v):
         # computes S_Z^{-1} @ S_full
-        return S_full_vp(S_induc_inv_vp(v))
+        # return S_full_vp(S_induc_inv_vp(v))
+        return jax.vmap(S_full_vp, in_axes=1, out_axes=1)(
+            jax.vmap(S_induc_inv_vp, in_axes=1, out_axes=1)(v)
+        )
     
     # ! option 2: investigate woodbury matrix identity to avoid inverse maybe?
     # todo ...

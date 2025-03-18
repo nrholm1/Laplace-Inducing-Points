@@ -55,7 +55,8 @@ def hutchpp_mvp(Xfun, D, seed, num_samples=10):
         Compute M^T X M
         as M.T@X@M = M.T@(X@M)
         """
-        Y = jax.vmap(Xfun, in_axes=1, out_axes=1)(M)
+        # Y = jax.vmap(Xfun, in_axes=1, out_axes=1)(M)
+        Y = Xfun(M)
         return M.T @ Y
     
     estimates = jnp.trace(quad_term(Q)) + (1/num_samples) * jnp.trace(quad_term(orthproj@G.T))
@@ -91,7 +92,7 @@ def na_hutchpp_dense(X, seed, num_samples=10):
     return jnp.trace(jnp.linalg.pinv(S@Z) @ (W.T@Z)) + (1/(c3*4*num_samples)) * (jnp.trace(G@X@G.T) - jnp.trace(G@Z@jnp.linalg.pinv(S@Z)@W.T@G.T))
 
 
-def na_hutchpp_mvp(Xfun, D, seed, num_samples=10):
+def na_hutchpp_mvp(Xfun, D, seed, num_samples=10, dtype=jnp.float32):
     """
     Uses NA-Hutch++ with linear operator oracle function.
     - `Xfun`: oracle computing v -> X@v, where X: square matrix
@@ -99,7 +100,7 @@ def na_hutchpp_mvp(Xfun, D, seed, num_samples=10):
     """
     c1,c2,c3 = .25,.5,.25 # good values, given in Hutch++ paper.
     # ? Sample isotropic random vectors, either from N(0,I) or with Rademacher dist. (unif{-1,+1} indices)
-    eps = jax.random.rademacher(key=seed, shape=(num_samples * 4, D))
+    eps = jax.random.rademacher(key=seed, shape=(num_samples * 4, D), dtype=dtype)
     # eps = jax.random.normal(key=seed, shape=(num_samples * 4, D)) 
     S,R,G = jnp.split(eps, [num_samples, num_samples*3], axis=0) # split into [1/4, 2/4, 1/4]
     W = Xfun(S.T)

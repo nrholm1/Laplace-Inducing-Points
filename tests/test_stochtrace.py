@@ -3,31 +3,9 @@ import jax.numpy as jnp
 import pytest
 
 from src.stochtrace import na_hutchpp_inv_mvp, stochastic_trace_estimator_full, hutchpp_dense, na_hutchpp_dense, hutchpp_mvp, na_hutchpp_mvp, hutchpp_inv_mvp
+from tests.fixtures import matrix_test_suite
 
 jax.config.update("jax_enable_x64", True)
-
-@pytest.fixture
-def matrix_test_suite():
-    """
-    Create PSD matrices with varying spectrum magnitude for verifying numerical stability.
-    PSD makes it less random since there otherwise might be some sign issues.
-    Also, PSD will always be the case for GGN, by design.
-    """
-    # trace = 6
-    M1 = jnp.diag(jnp.array([1.,2.,3.]))
-    
-    # trace = 10
-    M2 = jnp.array([ 
-        [  1., 4,  50],
-        [-30,  4., 16],
-        [ 12,  6,   5.],
-    ])
-    M2 = M2@M2.T
-    
-    M3 = jax.random.normal(key=jax.random.PRNGKey(seed=45895), shape=(3000,3000))
-    M3 = M3@M3.T
-    
-    return M1,M2,M3
 
 
 
