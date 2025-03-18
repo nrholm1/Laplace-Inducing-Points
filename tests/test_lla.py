@@ -4,7 +4,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from src.lla import compute_curvature_approx, posterior_lla, predict_lla
+from src.lla import compute_curvature_approx_dense, posterior_lla_dense, predict_lla_dense
 from fixtures import small_model_state, regression_1d_data
 
 
@@ -13,9 +13,9 @@ def test_posterior_lla(small_model_state, regression_1d_data):
     X, y = regression_1d_data
     w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
-    post_dist = posterior_lla(small_model_state, X, w, prior_std=prior_std, model_type="regressor")
+    post_dist = posterior_lla_dense(small_model_state, X, w, prior_std=prior_std, model_type="regressor")
     
-    _, flat_params_map, _ = compute_curvature_approx(
+    _, flat_params_map, _ = compute_curvature_approx_dense(
         small_model_state, X, w, prior_std=prior_std, model_type="regressor", return_Hinv=False
     )
     np.testing.assert_allclose(post_dist.mean(), flat_params_map, rtol=1e-4, atol=1e-6)
@@ -31,10 +31,10 @@ def test_predict_lla(small_model_state, regression_1d_data):
     w = jnp.array(1.) # jnp.ones((X.shape[0],))
     # Define some new input points.
     xnew = jnp.array([[-0.5], [0.5]])
-    pred_dist = predict_lla(small_model_state, xnew, X, w, model_type="regressor", prior_std=prior_std)
+    pred_dist = predict_lla_dense(small_model_state, xnew, X, w, model_type="regressor", prior_std=prior_std)
     
     # Compute the predictive mean using the MAP parameters.
-    cov, flat_params_map, unravel_fn = compute_curvature_approx(
+    cov, flat_params_map, unravel_fn = compute_curvature_approx_dense(
         small_model_state, X, w, prior_std=prior_std, model_type="regressor", return_Hinv=False
     )
     
