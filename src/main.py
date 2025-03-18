@@ -18,7 +18,7 @@ from nplot import plot_bc_boundary_contour, plot_bc_heatmap, scatterp, linep, pl
 
 from train_map import train_map
 from train_inducing import train_inducing_points
-from lla import posterior_lla, predict_lla
+from lla import posterior_lla_dense, predict_lla_dense
 from utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint
     
 
@@ -35,7 +35,7 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
     
     if model_type == "regressor":
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
-        postpreddist_full = predict_lla(
+        postpreddist_full = predict_lla_dense(
             map_model_state, xlin, xtrain, jnp.array(1.), model_type="regressor", prior_std=alpha_map**(-0.5)
         )
         plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
@@ -72,10 +72,10 @@ def plot_inducing(model_type, map_model_state,
     if model_type == "regressor":  # 1D regression case
         # Create a linear grid for predictions
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
-        postpreddist_full = predict_lla(
+        postpreddist_full = predict_lla_dense(
             map_model_state, xlin, xtrain, jnp.array(1.), model_type=model_type, prior_std=prior_std
         )
-        postpreddist_optimized = predict_lla(
+        postpreddist_optimized = predict_lla_dense(
             map_model_state, xlin, xinduc, w=winduc, model_type=model_type, prior_std=prior_std,
             full_set_size=xtrain.shape[0]
         )
@@ -91,7 +91,7 @@ def plot_inducing(model_type, map_model_state,
         plot_inducing_points_1D(ax, xinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
 
     elif model_type == "classifier":  # 2D classification case
-        postdist, unravel_fn = posterior_lla(
+        postdist, unravel_fn = posterior_lla_dense(
             map_model_state, xinduc, w=winduc, model_type=model_type, prior_std=prior_std,
             full_set_size=xtrain.shape[0], return_unravel_fn=True
         )
