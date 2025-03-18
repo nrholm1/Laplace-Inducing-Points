@@ -2,6 +2,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import jax.flatten_util
+import jax.profiler
 
 from src.ggn import compute_ggn_dense, compute_ggn_vp
 from src.utils import flatten_nn_params, is_pd
@@ -126,9 +127,9 @@ def test_ggnvp_I_vs_full_ggn_classifier(classification_2d_data, classifier_state
     d = flat_params.shape[0]
     I = jnp.eye(d)
 
+    # with jax.profiler.trace("/tmp/tensorboard"):
     GGN_vp_fun = compute_ggn_vp(state, X, w, model_type="classifier") # Build the matrix–free GGN vector product oracle.    
     mf_GGN = jax.vmap(GGN_vp_fun, in_axes=1, out_axes=1)(I) # apply the oracle to each column of I.
-    
     full_GGN, *_ = compute_ggn_dense(state, X, w, model_type="classifier")
 
     assert jnp.all(jnp.isclose(mf_GGN, full_GGN, atol=1e-6)), "GGNs don't match for classifier!"
