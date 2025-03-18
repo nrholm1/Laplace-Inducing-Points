@@ -81,3 +81,10 @@ def load_yaml(yaml_path):
         cfg = yaml.safe_load(f)
     return cfg
 
+
+count_model_params = lambda params: sum(x.size for x in jax.tree_util.tree_leaves(params))
+
+def print_summary(params):
+    num_model_params = count_model_params(params)    
+    print(f"Param count     (D) : {num_model_params}")
+    print(f"Cov. mat. size (D^2): {num_model_params**2:.3e}")

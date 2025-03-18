@@ -4,8 +4,10 @@ import jax.numpy as jnp
 import optax
 from tqdm import tqdm
 
-from lla import posterior_lla, compute_curvature_approx
+from lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
+from stochtrace import hutchpp_mvp, na_hutchpp_mvp
 from train_map import nl_likelihood_fun_regression
+from src.utils import count_model_params
 
 
 def sample_params(mu, cov, rng, num_samples=1):
@@ -46,7 +48,7 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, model_ty
     # Unpack the parameters: inducing points x and weights w
     x, w = params
 
-    q, unravel_fn = posterior_lla(
+    q, unravel_fn = posterior_lla_dense(
         state,
         prior_std=alpha,# todo correct alpha used here?
         x=x,
@@ -63,6 +65,39 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, model_ty
     return - (loglik_term - kl_term) + reg_term
 
 
+def alternative_objective_scalable(params, x, state, alpha, model_type, seed, full_set_size=None):
+    xind, w = params
+    prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
+    w_fake = jnp.array(1.)
+    
+    D = count_model_params(state.params)
+    
+    # compute matrix free linear operator oracles
+    S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size)
+    S_induc_vp = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size)
+    
+    # ! option 1: use conjugate gradient 
+    @jax.jit
+    def S_induc_inv_vp(v):
+        x,info = jax.scipy.sparse.linalg.cg(A=S_induc_vp, b=v)
+        return x
+    
+    @jax.jit
+    def composite_vp(v):
+        # computes S_Z^{-1} @ S_full
+        return S_full_vp(S_induc_inv_vp(v))
+    
+    # ! option 2: investigate woodbury matrix identity to avoid inverse maybe?
+    # todo ...
+    
+    trace_term = hutchpp_mvp(composite_vp, D=D, seed=seed)
+    # trace_term = na_hutchpp_mvp(composite_vp, D=D, seed=seed)
+    
+    logdet_term = ...
+    
+    return trace_term + logdet_term
+    
+
 def alternative_objective(params, x, state, alpha, model_type, full_set_size=None):
     # Unpack the parameters: inducing points x and weights w
     xind, w = params
@@ -70,13 +105,13 @@ def alternative_objective(params, x, state, alpha, model_type, full_set_size=Non
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
     # w_fake = jnp.ones_like(dataset[0])
     w_fake = jnp.array(1.)
-    S_full_inv, *_ = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
-    S_induc,    *_ = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
+    S_full_inv, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
+    S_induc,    *_ = compute_curvature_approx_dense(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
     
     """
-    ========================
+    =========================================
     Compute KL[ q(theta|Z) || p(theta|data) ]
-    ========================
+    =========================================
     """
     trace_term = jnp.linalg.trace(S_full_inv @ S_induc)
     
@@ -84,10 +119,10 @@ def alternative_objective(params, x, state, alpha, model_type, full_set_size=Non
     sign_full, logdet_full = jnp.linalg.slogdet(S_full_inv)
     sign_induc, logdet_induc = jnp.linalg.slogdet(S_induc)
     # todo use signs to signal if determinants are nonpositive - does not play well with JIT
-    log_det_term = - logdet_full - logdet_induc
+    logdet_term = - logdet_full - logdet_induc
     
     D = 0 # todo const - does it matter for optimization?
-    return 0.5 * (trace_term - D + log_det_term)
+    return 0.5 * (trace_term - D + logdet_term)
 
 # variational_grad = jax.value_and_grad(naive_objective)
 variational_grad = jax.value_and_grad(alternative_objective)
