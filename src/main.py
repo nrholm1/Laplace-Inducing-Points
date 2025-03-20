@@ -12,17 +12,17 @@ import matplotlib.pyplot as plt
 from seaborn import set_style
 set_style('darkgrid')
 
-from toymodels import SimpleRegressor, SimpleClassifier, print_summary
+from toymodels import SimpleRegressor, SimpleClassifier
 from toydata import JAXDataset, get_dataloaders, plot_binary_classification_data
 from nplot import plot_bc_boundary_contour, plot_bc_heatmap, scatterp, linep, plot_cinterval, plot_inducing_points_1D
 
 from train_map import train_map
 from train_inducing import train_inducing_points
 from lla import posterior_lla_dense, predict_lla_dense
-from utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint
+from utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary
     
 
-jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_enable_x64", True)
 
 
 def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dataset_name=""):
