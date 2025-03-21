@@ -45,11 +45,6 @@ def eval_step_regression(state, batch):
     loss = nl_likelihood_fun_regression(state.apply_fn, state.params, batch)
     return loss
 
-# Hinge loss (if needed)
-@jax.jit
-def hinge_loss(logits, labels):
-    loss = jnp.maximum(0, 1 - labels * logits)
-    return loss.mean()
 
 # Classification Loss Functions
 @partial(jax.jit, static_argnames=("apply_fn",))
