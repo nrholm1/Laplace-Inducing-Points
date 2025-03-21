@@ -119,31 +119,31 @@ def alternative_objective_scalable(params, x, state, alpha, model_type, seed, fu
     return trace_term + logdet_term
     
 
-# def alternative_objective(params, x, state, alpha, model_type, full_set_size=None):
-#     # Unpack the parameters: inducing points x and weights w
-#     xind, w = params
+def alternative_objective(params, x, state, alpha, model_type, full_set_size=None):
+    # Unpack the parameters: inducing points x and weights w
+    xind, w = params
     
-#     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-#     # w_fake = jnp.ones_like(dataset[0])
-#     w_fake = jnp.array(1.)
-#     S_full, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
-#     S_induc_inv,    *_ = compute_curvature_approx_dense(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
+    prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
+    # w_fake = jnp.ones_like(dataset[0])
+    w_fake = jnp.array(1.)
+    S_full, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
+    S_induc_inv,    *_ = compute_curvature_approx_dense(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
     
-#     """
-#     =========================================
-#     Compute KL[ q(theta|Z) || p(theta|data) ]
-#     =========================================
-#     """
-#     trace_term = jnp.linalg.trace(S_full @ S_induc_inv)
+    """
+    =========================================
+    Compute KL[ q(theta|Z) || p(theta|data) ]
+    =========================================
+    """
+    trace_term = jnp.linalg.trace(S_full @ S_induc_inv)
     
-#     # log_det_term = jnp.log( 1 / (jnp.linalg.det(S_full_inv) * jnp.linalg.det(S_induc)) ) # ! problematic, super ill-conditioned?
-#     sign_full, logdet_full = jnp.linalg.slogdet(S_full)
-#     sign_induc, logdet_induc_inv = jnp.linalg.slogdet(S_induc_inv)
-#     # todo use signs to signal if determinants are nonpositive - does not play well with JIT
-#     logdet_term = - logdet_full - logdet_induc_inv
+    # log_det_term = jnp.log( 1 / (jnp.linalg.det(S_full_inv) * jnp.linalg.det(S_induc)) ) # ! problematic, super ill-conditioned?
+    sign_full, logdet_full = jnp.linalg.slogdet(S_full)
+    sign_induc, logdet_induc_inv = jnp.linalg.slogdet(S_induc_inv)
+    # todo use signs to signal if determinants are nonpositive - does not play well with JIT
+    logdet_term = - logdet_full - logdet_induc_inv
     
-#     D = 0 # todo const - does it matter for optimization?
-#     return 0.5 * (trace_term - D + logdet_term)
+    D = 0 # todo const - does it matter for optimization?
+    return 0.5 * (trace_term - D + logdet_term)
 
 # variational_grad = jax.value_and_grad(naive_objective)
 # variational_grad = jax.value_and_grad(alternative_objective)
