@@ -4,8 +4,12 @@ import jax.numpy as jnp
 import optax
 from tqdm import tqdm
 
-from lla import posterior_lla, compute_curvature_approx
-from train_map import nl_likelihood_fun_regression
+from matfree import decomp, funm, stochtrace as matfree_stochtrace
+
+from lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
+from src.stochtrace import hutchpp_mvp, na_hutchpp_mvp, stochastic_trace_estimator_mvp
+from src.train_map import nl_likelihood_fun_regression
+from src.utils import count_model_params
 
 
 def sample_params(mu, cov, rng, num_samples=1):
@@ -46,7 +50,7 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, model_ty
     # Unpack the parameters: inducing points x and weights w
     x, w = params
 
-    q, unravel_fn = posterior_lla(
+    q, unravel_fn = posterior_lla_dense(
         state,
         prior_std=alpha,# todo correct alpha used here?
         x=x,
@@ -63,6 +67,64 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, model_ty
     return - (loglik_term - kl_term) + reg_term
 
 
+def alternative_objective_scalable(params, x, state, alpha, model_type, key, full_set_size=None):
+    xind, w = params
+    prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
+    w_fake = jnp.array(1.)
+    
+    D = count_model_params(state.params)
+    if model_type == 'regressor': # todo: handle this better!!
+        D -= 1 # ! subtract logvar parameter!
+    
+    # compute matrix free linear operator oracles
+    S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size)
+    S_induc_vp = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size)
+    
+    # ! option 1: use conjugate gradient 
+    @jax.jit
+    def S_induc_inv_vp(v):
+        # ! problems with backprop needing to store?
+        x,info = jax.scipy.sparse.linalg.cg(A=S_induc_vp, b=v)
+        return x
+    
+    @jax.jit
+    def composite_vp(v):
+        # computes S_Z^{-1} @ S_full
+        return S_full_vp(S_induc_inv_vp(v))                      # ! for hutchinson
+        # return jax.vmap(S_full_vp, in_axes=1, out_axes=1)(     # ! for hutch++
+        #     jax.vmap(S_induc_inv_vp, in_axes=1, out_axes=1)(v)
+        # )
+    
+    # ! option 2: investigate woodbury matrix identity to avoid inverse maybe?
+    # todo ...maybe?
+    
+    # todo try to reuse randomly sampled vectors from stochtrace estimator for logdet estimator
+    
+    # todo try simple hutchinson estimator
+    trace_term = stochastic_trace_estimator_mvp(composite_vp, D=D, seed=key, num_samples=20)
+    # ! or
+    # trace_term = hutchpp_mvp(composite_vp, D=D, seed=key, num_samples=5)
+    # ! or 
+    # trace_term = na_hutchpp_mvp(composite_vp, D=D, seed=seed)
+    
+    # ! use stochastic Lanczos quadrature
+    def stoch_lanczos_quadrature(Xfun):
+        # adapted directly from 
+        # https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
+        num_matvecs = 3
+        tridiag_sym = decomp.tridiag_sym(num_matvecs)
+        problem = funm.integrand_funm_sym_logdet(tridiag_sym)
+        x_like = jnp.ones((D,), dtype=float)
+        sampler = matfree_stochtrace.sampler_normal(x_like, num=100)
+        estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
+        logdet = estimator(Xfun, key)
+        return logdet
+    
+    logdet_term = stoch_lanczos_quadrature(S_induc_vp)
+    
+    return trace_term + logdet_term # todo missing beta*D term?
+    
+
 def alternative_objective(params, x, state, alpha, model_type, full_set_size=None):
     # Unpack the parameters: inducing points x and weights w
     xind, w = params
@@ -70,27 +132,28 @@ def alternative_objective(params, x, state, alpha, model_type, full_set_size=Non
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
     # w_fake = jnp.ones_like(dataset[0])
     w_fake = jnp.array(1.)
-    S_full_inv, *_ = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
-    S_induc,    *_ = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
+    S_full, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
+    S_induc_inv,    *_ = compute_curvature_approx_dense(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
     
     """
-    ========================
+    =========================================
     Compute KL[ q(theta|Z) || p(theta|data) ]
-    ========================
+    =========================================
     """
-    trace_term = jnp.linalg.trace(S_full_inv @ S_induc)
+    trace_term = jnp.linalg.trace(S_full @ S_induc_inv)
     
     # log_det_term = jnp.log( 1 / (jnp.linalg.det(S_full_inv) * jnp.linalg.det(S_induc)) ) # ! problematic, super ill-conditioned?
-    sign_full, logdet_full = jnp.linalg.slogdet(S_full_inv)
-    sign_induc, logdet_induc = jnp.linalg.slogdet(S_induc)
+    sign_full, logdet_full = jnp.linalg.slogdet(S_full)
+    sign_induc, logdet_induc_inv = jnp.linalg.slogdet(S_induc_inv)
     # todo use signs to signal if determinants are nonpositive - does not play well with JIT
-    log_det_term = - logdet_full - logdet_induc
+    logdet_term = - logdet_full - logdet_induc_inv
     
     D = 0 # todo const - does it matter for optimization?
-    return 0.5 * (trace_term - D + log_det_term)
+    return 0.5 * (trace_term - D + logdet_term)
 
 # variational_grad = jax.value_and_grad(naive_objective)
-variational_grad = jax.value_and_grad(alternative_objective)
+# variational_grad = jax.value_and_grad(alternative_objective)
+variational_grad = jax.value_and_grad(alternative_objective_scalable)
 
 
 @partial(jax.jit, static_argnames=('model_type', 'xoptimizer', 'num_mc_samples', 'full_set_size'))
@@ -100,7 +163,7 @@ def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xopti
         dataset, 
         map_model_state, 
         alpha, 
-        # rng,
+        key=rng,
         # num_mc_samples=num_mc_samples,
         model_type=model_type, 
         full_set_size=full_set_size

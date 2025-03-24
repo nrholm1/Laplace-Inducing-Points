@@ -1,9 +1,9 @@
 map:
   batch_size: 32
-  epochs_map: 2000
+  epochs_map: 5000
   lr_map: 0.001
   alpha: 0.5
-  seed: 127831678241
+  seed: 127831678241_123
 inducing:
   m_induc: 30
   epochs_induc: 1000

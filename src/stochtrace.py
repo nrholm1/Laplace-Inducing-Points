@@ -1,21 +1,36 @@
+from functools import partial
 import jax
 import jax.numpy as jnp
 
 
-def stochastic_trace_estimator_full(X, seed, num_samples=1_000):
+def stochastic_trace_estimator_dense(X, seed, num_samples=1_000):
     """
     Uses Girard-Hutchinson estimator on fully instantiated matrices.
-    # ! quite unstable! Bug or just slow MSE convergence?
     """
     def sample_eps(X, seed, num_samples): 
-        return jax.random.rademacher(key=seed, shape=(num_samples, X.shape[0]))
+        return jax.random.rademacher(key=seed, shape=(num_samples, X.shape[0]), dtype=X.dtype)
         # return jax.random.normal(key=seed, shape=(num_samples, X.shape[0]))
     def single_estimate(X, eps):
         y = jnp.matmul(X, eps)
         return jnp.dot(eps, y)
-    eps = sample_eps(X, seed=seed, num_samples=num_samples)
+    Eps = sample_eps(X, seed=seed, num_samples=num_samples)
     
-    return jax.vmap(single_estimate, in_axes=(None,0))(X,eps)
+    return jax.vmap(single_estimate, in_axes=(None, 0))(X,Eps).mean()
+
+
+def stochastic_trace_estimator_mvp(Xfun, D, seed, num_samples=1_000, dtype=jnp.float32):
+    """
+    Uses Girard-Hutchinson estimator with linear operator oracles.
+    """
+    
+    def sample_eps(seed, num_samples): 
+        return jax.random.rademacher(key=seed, shape=(num_samples, D), dtype=dtype)
+        # return jax.random.normal(key=seed, shape=(num_samples, X.shape[0]))
+    def single_estimate(Xfun, eps):
+        return jnp.dot(eps, Xfun(eps))
+    Eps = sample_eps(seed=seed, num_samples=num_samples)
+    
+    return jax.vmap(single_estimate, in_axes=(None, 0))(Xfun,Eps).mean()
 
 
 def hutchpp_dense(X, seed, num_samples=10):
@@ -48,17 +63,32 @@ def hutchpp_mvp(Xfun, D, seed, num_samples=10):
     Q,R = jnp.linalg.qr(Xfun(S.T))
     orthproj = (jnp.eye(Q.shape[0]) - Q@Q.T) # symmetric
     
+    @jax.jit
     def quad_term(M):
         """
         Compute M^T X M
         as M.T@X@M = M.T@(X@M)
         """
-        Y = jax.vmap(Xfun, in_axes=1, out_axes=1)(M)
+        # Y = jax.vmap(Xfun, in_axes=1, out_axes=1)(M)
+        Y = Xfun(M)
         return M.T @ Y
     
     estimates = jnp.trace(quad_term(Q)) + (1/num_samples) * jnp.trace(quad_term(orthproj@G.T))
     
-    return estimates.mean()
+    return estimates
+
+
+def hutchpp_inv_mvp(Xfun, D, seed, num_samples=10):
+    """
+    Uses Conjugate Gradient on Hutch++ with linear operator oracle function to approximate the trace of the inverse.
+    - `Xfun`: oracle computing v -> X@v, where X: square matrix
+    - `D`: int, dim(X)
+    """
+    @jax.jit
+    def Xinvfun(v):
+        x,info = jax.scipy.sparse.linalg.cg(A=Xfun, b=v)
+        return x
+    return hutchpp_mvp(Xinvfun, D, seed, num_samples=num_samples)
 
 
 def na_hutchpp_dense(X, seed, num_samples=10):
@@ -76,7 +106,7 @@ def na_hutchpp_dense(X, seed, num_samples=10):
     return jnp.trace(jnp.linalg.pinv(S@Z) @ (W.T@Z)) + (1/(c3*4*num_samples)) * (jnp.trace(G@X@G.T) - jnp.trace(G@Z@jnp.linalg.pinv(S@Z)@W.T@G.T))
 
 
-def na_hutchpp_mvp(Xfun, D, seed, num_samples=10):
+def na_hutchpp_mvp(Xfun, D, seed, num_samples=10, dtype=jnp.float32):
     """
     Uses NA-Hutch++ with linear operator oracle function.
     - `Xfun`: oracle computing v -> X@v, where X: square matrix
@@ -84,13 +114,27 @@ def na_hutchpp_mvp(Xfun, D, seed, num_samples=10):
     """
     c1,c2,c3 = .25,.5,.25 # good values, given in Hutch++ paper.
     # ? Sample isotropic random vectors, either from N(0,I) or with Rademacher dist. (unif{-1,+1} indices)
-    eps = jax.random.rademacher(key=seed, shape=(num_samples * 4, D))
+    eps = jax.random.rademacher(key=seed, shape=(num_samples * 4, D), dtype=dtype)
     # eps = jax.random.normal(key=seed, shape=(num_samples * 4, D)) 
     S,R,G = jnp.split(eps, [num_samples, num_samples*3], axis=0) # split into [1/4, 2/4, 1/4]
     W = Xfun(S.T)
     Z = Xfun(R.T)
     
     return jnp.trace(jnp.linalg.pinv(S@Z) @ (W.T@Z)) + (1/(c3*4*num_samples)) * (jnp.trace(G@Xfun(G.T)) - jnp.trace(G@Z@jnp.linalg.pinv(S@Z)@W.T@G.T))
+
+
+def na_hutchpp_inv_mvp(Xfun, D, seed, num_samples=10):
+    """
+    Uses Conjugate Gradient on NA-Hutch++ with linear operator oracle function to approximate the trace of the inverse.
+    - `Xfun`: oracle computing v -> X@v, where X: square matrix
+    - `D`: int, dim(X)
+    """
+    @jax.jit
+    def Xinvfun(v):
+        v = v.astype(jnp.float64)
+        x,info = jax.scipy.sparse.linalg.cg(A=Xfun, b=v)
+        return x
+    return na_hutchpp_mvp(Xinvfun, D, seed, num_samples=num_samples)
 
 
 # todo could also implement XTrace? Seems to not be a better choice for our case, so defer...

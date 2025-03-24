@@ -13,7 +13,7 @@ def flatten_nn_params(params):
     # ! maybe inefficient?
     # Remove the 'logvar' parameter
     params_without_logvar = {
-        k: v for k, v in params['params'].items() if k != 'logvar'
+        k: v for k, v in params.items() if k != 'logvar'
     }
     return jax.flatten_util.ravel_pytree({'params': params_without_logvar})
     
@@ -81,3 +81,10 @@ def load_yaml(yaml_path):
         cfg = yaml.safe_load(f)
     return cfg
 
+
+count_model_params = lambda params: sum(x.size for x in jax.tree_util.tree_leaves(params))
+
+def print_summary(params):
+    num_model_params = count_model_params(params)    
+    print(f"Param count     (D) : {num_model_params}")
+    print(f"Cov. mat. size (D^2): {num_model_params**2:.3e}")

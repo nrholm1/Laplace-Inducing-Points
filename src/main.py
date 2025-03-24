@@ -12,17 +12,16 @@ import matplotlib.pyplot as plt
 from seaborn import set_style
 set_style('darkgrid')
 
-from toymodels import SimpleRegressor, SimpleClassifier, print_summary
+from toymodels import SimpleRegressor, SimpleClassifier
 from toydata import JAXDataset, get_dataloaders, plot_binary_classification_data
 from nplot import plot_bc_boundary_contour, plot_bc_heatmap, scatterp, linep, plot_cinterval, plot_inducing_points_1D
 
 from train_map import train_map
 from train_inducing import train_inducing_points
-from lla import posterior_lla, predict_lla
-from utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint
+from lla import posterior_lla_dense, predict_lla_dense
+from utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary
     
-
-jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_enable_x64", True)
 
 
 def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dataset_name=""):
@@ -35,13 +34,14 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
     
     if model_type == "regressor":
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
-        postpreddist_full = predict_lla(
+        postpreddist_full = predict_lla_dense(
             map_model_state, xlin, xtrain, jnp.array(1.), model_type="regressor", prior_std=alpha_map**(-0.5)
         )
         plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
                         text="full", color='orange', zorder=5)
         scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
         scatterp(xtrain, ytrain, zorder=1, label='Train data')
+        
     elif model_type == "classifier":
         from src.toydata import plot_binary_classification_data
         plot_binary_classification_data(xtrain, ytrain)
@@ -72,10 +72,10 @@ def plot_inducing(model_type, map_model_state,
     if model_type == "regressor":  # 1D regression case
         # Create a linear grid for predictions
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
-        postpreddist_full = predict_lla(
+        postpreddist_full = predict_lla_dense(
             map_model_state, xlin, xtrain, jnp.array(1.), model_type=model_type, prior_std=prior_std
         )
-        postpreddist_optimized = predict_lla(
+        postpreddist_optimized = predict_lla_dense(
             map_model_state, xlin, xinduc, w=winduc, model_type=model_type, prior_std=prior_std,
             full_set_size=xtrain.shape[0]
         )
@@ -91,8 +91,8 @@ def plot_inducing(model_type, map_model_state,
         plot_inducing_points_1D(ax, xinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
 
     elif model_type == "classifier":  # 2D classification case
-        postdist, unravel_fn = posterior_lla(
-            map_model_state, prior_std, xinduc, w=winduc, model_type=model_type,
+        postdist, unravel_fn = posterior_lla_dense(
+            map_model_state, xinduc, w=winduc, model_type=model_type, prior_std=prior_std,
             full_set_size=xtrain.shape[0], return_unravel_fn=True
         )
         
@@ -170,17 +170,18 @@ def main():
     num_c = model_cfg.get("num_c", 2) if model_type == "classifier" else 1
     model_seed = model_cfg["rng_seed"]
 
+    rng_model = jax.random.PRNGKey(model_seed)
     if model_type == "regressor":
+        # rng_model = {'params': rng_model, 'logvar': zeros_rng}
         model = SimpleRegressor(numh=num_h, numl=num_l)
     elif model_type == "classifier":
         model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
 
-    rng_model = jax.random.PRNGKey(model_seed)
     dummy_inp = jax.random.normal(rng_model, shape=(num_h, num_c))
-    params = model.init(rng_model, dummy_inp)
+    variables = model.init(rng_model, dummy_inp)
 
     print("== Model Summary ==")
-    print_summary(params)
+    print_summary(variables)
 
     # Load optimization config (combined for MAP and inducing)
     opt_cfg = load_yaml(args.optimization_config)
@@ -205,7 +206,7 @@ def main():
     # optimizer_map = optax.sgd(lr_map)
     model_state = train_state.TrainState.create(
         apply_fn=model.apply,
-        params=params,
+        params=variables,
         tx=optimizer_map
     )
     map_ckpt_prefix = f"map_{args.dataset}"
