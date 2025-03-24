@@ -70,4 +70,19 @@ if __name__ == '__main__':
         map_model_state = train_map_wrapper(epochs_map)
         save_checkpoint(map_model_state, ckpt_dir="./checkpoint/map", prefix="mnist", step=epochs_map)
     
+    
+    if args.mode in ["train_inducing", "full_pipeline"]:
+        # Train inducing points and save a checkpoint
+        # todo
+        ...
+    
+    if args.mode in ["train_inducing", "visualize", "full_pipeline"]:
+        # Visualize LLA approximation
+        # todo
+        # 1. Sampling algorithm
+        # 2. Sample from full LLA (if possible? Maybe we will have to train a smaller CNN)
+        # 3. Sample from inducing point LLA
+        # 4. Plot uncertainties over class distributions - maybe we will have to get a less certain MAP model.
+        ...
+    
     pdb.set_trace()

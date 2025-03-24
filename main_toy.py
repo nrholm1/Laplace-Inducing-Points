@@ -59,7 +59,7 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
 def plot_inducing(model_type, map_model_state, 
                   xtrain, ytrain, 
                   xtest, ytest,
-                  xinduc, winduc, 
+                  zinduc, 
                   prior_std, rng_inducing,
                   model, optimizer_map, 
                   m_induc, epochs_induc, dataset_name):
@@ -73,10 +73,10 @@ def plot_inducing(model_type, map_model_state,
         # Create a linear grid for predictions
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
         postpreddist_full = predict_lla_dense(
-            map_model_state, xlin, xtrain, jnp.array(1.), model_type=model_type, prior_std=prior_std
+            map_model_state, xlin, xtrain, model_type=model_type, prior_std=prior_std
         )
         postpreddist_optimized = predict_lla_dense(
-            map_model_state, xlin, xinduc, w=winduc, model_type=model_type, prior_std=prior_std,
+            map_model_state, xlin, zinduc, model_type=model_type, prior_std=prior_std,
             full_set_size=xtrain.shape[0]
         )
         
@@ -88,17 +88,17 @@ def plot_inducing(model_type, map_model_state,
         # Plot training and test data
         scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
         scatterp(xtrain, ytrain, zorder=1, label='Train data')
-        plot_inducing_points_1D(ax, xinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
+        plot_inducing_points_1D(ax, zinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
 
     elif model_type == "classifier":  # 2D classification case
         postdist, unravel_fn = posterior_lla_dense(
-            map_model_state, xinduc, w=winduc, model_type=model_type, prior_std=prior_std,
+            map_model_state, zinduc, model_type=model_type, prior_std=prior_std,
             full_set_size=xtrain.shape[0], return_unravel_fn=True
         )
         
         # Plot the inducing points
         # plot_binary_classification_data(xtrain, ytrain)
-        scatterp(*xinduc.T, color="yellow", zorder=8, marker="X", label='Inducing points')
+        scatterp(*zinduc.T, color="yellow", zorder=8, marker="X", label='Inducing points')
 
         rng_theta_sample = jax.random.fold_in(rng_inducing, 0)
         # Plot multiple boundary contours sampled from the posterior
@@ -254,17 +254,15 @@ def main():
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     m_induc = min(m_induc, len(test_dataset))
     _, test_loader = get_dataloaders(train_dataset, test_dataset, m_induc)
-    xinit = next(iter(test_loader))[0]
-    winit = jnp.array(1.)
+    zinit = next(iter(test_loader))[0]
 
     if args.mode in ["train_inducing", "full_pipeline"]:
-        xoptimizer = optax.adam(lr_induc)
+        zoptimizer = optax.adam(lr_induc)
         
-        xinduc,winduc = train_inducing_points(
+        zinduc = train_inducing_points(
             map_model_state, 
-            xinit, 
-            winit, 
-            xoptimizer,
+            zinit, 
+            zoptimizer,
             dataloader=train_loader,
             rng=rng_inducing,
             model_type=model_type,
@@ -274,17 +272,11 @@ def main():
             full_set_size=xtrain.shape[0],
         )
 
-        # Save both the inducing points (xinduc) and the weights (winduc)
+        # Save the inducing points (zinduc)
         save_array_checkpoint(
-            array=xinduc,
+            array=zinduc,
             ckpt_dir=args.ckpt_induc,
-            name=induc_ckpt_name + "_x",
-            step=epochs_induc
-        )
-        save_array_checkpoint(
-            array=winduc,
-            ckpt_dir=args.ckpt_induc,
-            name=induc_ckpt_name + "_w",
+            name=induc_ckpt_name,
             step=epochs_induc
         )
     
@@ -292,15 +284,10 @@ def main():
             print("[DONE] Inducing training only.")
             # return # ! don't return, visualize
     else:
-        # Load both the inducing points (xinduc) and the weights (winduc)
-        xinduc = load_array_checkpoint(
+        # Load both the inducing points (zinduc)
+        zinduc = load_array_checkpoint(
             ckpt_dir=args.ckpt_induc,
-            name=induc_ckpt_name + "_x",
-            step=epochs_induc
-        )
-        winduc = load_array_checkpoint(
-            ckpt_dir=args.ckpt_induc,
-            name=induc_ckpt_name + "_w",
+            name=induc_ckpt_name,
             step=epochs_induc
         )
 
@@ -310,7 +297,7 @@ def main():
         plot_inducing(model_type, map_model_state, 
                       xtrain, ytrain, 
                       xtest, ytest,
-                      xinduc, winduc, 
+                      zinduc, 
                       prior_std, rng_inducing,
                       model, optimizer_map, 
                       m_induc, epochs_induc, 

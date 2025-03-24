@@ -46,15 +46,11 @@ def var_kl_fun(q, alpha):
     return kl_term
 
 
-def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, model_type, full_set_size=None, reg_coeff=0):
-    # Unpack the parameters: inducing points x and weights w
-    x, w = params
-
+def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, full_set_size=None, reg_coeff=0):
     q, unravel_fn = posterior_lla_dense(
         state,
         prior_std=alpha,# todo correct alpha used here?
-        x=x,
-        w=w,
+        x=z,
         model_type=model_type,
         full_set_size=full_set_size,
         return_unravel_fn=True
@@ -67,18 +63,16 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, model_ty
     return - (loglik_term - kl_term) + reg_term
 
 
-def alternative_objective_scalable(params, x, state, alpha, model_type, key, full_set_size=None):
-    xind, w = params
+def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set_size=None):
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    w_fake = jnp.array(1.)
     
     D = count_model_params(state.params)
     if model_type == 'regressor': # todo: handle this better!!
         D -= 1 # ! subtract logvar parameter!
     
     # compute matrix free linear operator oracles
-    S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size)
-    S_induc_vp = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size)
+    S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
+    S_induc_vp = compute_curvature_approx(state, z, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
     
     # ! option 1: use conjugate gradient 
     @jax.jit
@@ -125,15 +119,10 @@ def alternative_objective_scalable(params, x, state, alpha, model_type, key, ful
     return trace_term + logdet_term # todo missing beta*D term?
     
 
-def alternative_objective(params, x, state, alpha, model_type, full_set_size=None):
-    # Unpack the parameters: inducing points x and weights w
-    xind, w = params
-    
+def alternative_objective(z, x, state, alpha, model_type, key, full_set_size=None):
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    # w_fake = jnp.ones_like(dataset[0])
-    w_fake = jnp.array(1.)
-    S_full, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
-    S_induc_inv,    *_ = compute_curvature_approx_dense(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
+    S_full, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
+    S_induc_inv,    *_ = compute_curvature_approx_dense(state, z, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
     
     """
     =========================================
@@ -157,9 +146,9 @@ variational_grad = jax.value_and_grad(alternative_objective_scalable)
 
 
 @partial(jax.jit, static_argnames=('model_type', 'xoptimizer', 'num_mc_samples', 'full_set_size'))
-def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, model_type, full_set_size=None):
+def optimize_step(z, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, model_type, full_set_size=None):
     loss, grads = variational_grad(
-        params, 
+        z, 
         dataset, 
         map_model_state, 
         alpha, 
@@ -169,13 +158,13 @@ def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xopti
         full_set_size=full_set_size
     )
     updates, new_opt_state = xoptimizer.update(grads, opt_state)
-    new_params = optax.apply_updates(params, updates)
+    new_params = optax.apply_updates(z, updates)
     return new_params, new_opt_state, loss
 
 
-def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size):
-    params = (xinit, winit)
-    opt_state = xoptimizer.init(params)
+def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size):
+    z = zinit
+    opt_state = zoptimizer.init(z)
     _iter = iter(dataloader)
     
     def get_next_sample(num_batches=1):
@@ -202,8 +191,8 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
         dataset_sample = get_next_sample(num_batches=1)
         x_sample,_ = dataset_sample
         rng, rng_step = jax.random.split(rng)
-        params, opt_state, loss = optimize_step(
-            params, 
+        z, opt_state, loss = optimize_step(
+            z, 
             x_sample, 
             # dataset_sample, # for naive_objective
             map_model_state, 
@@ -211,16 +200,13 @@ def train_inducing_points(map_model_state, xinit, winit, xoptimizer, dataloader,
             opt_state, 
             rng_step,
             model_type=model_type,
-            xoptimizer=xoptimizer, 
+            xoptimizer=zoptimizer, 
             num_mc_samples=num_mc_samples, 
             full_set_size=full_set_size
         )
-        # Unpack parameters:
-        x, w = params
         # ! Enforce constraints on x (and w, if necessary)
-        x = jnp.clip(x, lb, ub)
-        params = (x, w)
+        z = jnp.clip(z, lb, ub)
 
-        pbar.set_description_str(f"[w = {w:.3f}] Loss: {loss:.3f}", refresh=True)
+        pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
     
-    return params
+    return z

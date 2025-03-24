@@ -33,7 +33,7 @@ clean:
 # PROJECT RULES                                                                 #
 #################################################################################
 
-toymain = toymain.py
+toymain = main_toy.py
 datamain = src/toydata.py
 
 DEVICE = cpu

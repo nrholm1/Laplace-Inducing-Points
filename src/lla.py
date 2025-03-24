@@ -5,7 +5,7 @@ import tensorflow_probability.substrates.jax as tfp
 from src.ggn import compute_ggn_dense, compute_ggn_vp
 
 
-def compute_curvature_approx(map_state, x, w, model_type, prior_std, full_set_size=None):
+def compute_curvature_approx(map_state, x, model_type, prior_std, full_set_size=None):
     """
     Return linear operator oracle for computing mvp with PD negative approximate Hessian of the model parameters.
     
@@ -13,20 +13,20 @@ def compute_curvature_approx(map_state, x, w, model_type, prior_std, full_set_si
     
     where alpha is prior precision.
     """
-    ggn_vp = compute_ggn_vp(map_state, x, w, model_type=model_type, full_set_size=full_set_size)
+    ggn_vp = compute_ggn_vp(map_state, x, model_type=model_type, full_set_size=full_set_size)
     alpha = 1.0 / (prior_std**2)
     def curvature_vp(v):
         return ggn_vp(v) + alpha*v
     return curvature_vp
 
 
-def compute_curvature_approx_dense(map_state, x, w, model_type, prior_std, full_set_size=None, return_Hinv=True):
+def compute_curvature_approx_dense(map_state, x, model_type, prior_std, full_set_size=None, return_Hinv=True):
     """
     Compute PD negative approximate Hessian of the model parameters.
     > GGN = J.T @ H @ J + alpha·I
     - Note: Instantiates dense GGN matrix.
     """
-    GGN, flat_params_map, unravel_fn = compute_ggn_dense(map_state, x, w, model_type=model_type, full_set_size=full_set_size)
+    GGN, flat_params_map, unravel_fn = compute_ggn_dense(map_state, x, model_type=model_type, full_set_size=full_set_size)
     prior_precision = 1.0 / (prior_std**2)
     GGN += prior_precision * jnp.eye(GGN.shape[0])
     if return_Hinv:
@@ -35,9 +35,9 @@ def compute_curvature_approx_dense(map_state, x, w, model_type, prior_std, full_
         return jnp.linalg.inv(GGN), flat_params_map, unravel_fn
 
 
-def posterior_lla_dense(map_state, x, w, model_type, prior_std=1.0, full_set_size=None, return_unravel_fn=False):
+def posterior_lla_dense(map_state, x, model_type, prior_std=1.0, full_set_size=None, return_unravel_fn=False):
     S_approx, flat_params_map, unravel_fn = compute_curvature_approx_dense(
-        map_state, x, w, model_type=model_type, prior_std=prior_std, full_set_size=full_set_size, return_Hinv=False
+        map_state, x, model_type=model_type, prior_std=prior_std, full_set_size=full_set_size, return_Hinv=False
     )
     posterior_dist = tfp.distributions.MultivariateNormalFullCovariance(
         loc=flat_params_map.astype(jnp.float64),
@@ -48,9 +48,9 @@ def posterior_lla_dense(map_state, x, w, model_type, prior_std=1.0, full_set_siz
     return posterior_dist
 
 
-def predict_lla_dense(map_state, xnew, x, w, model_type, prior_std=1.0, full_set_size=None):
+def predict_lla_dense(map_state, xnew, x, model_type, prior_std=1.0, full_set_size=None):
     S_approx, flat_params_map, unravel_fn = compute_curvature_approx_dense(
-        map_state, x, w, model_type=model_type, prior_std=prior_std, full_set_size=full_set_size, return_Hinv=False
+        map_state, x, model_type=model_type, prior_std=prior_std, full_set_size=full_set_size, return_Hinv=False
     )
     
     @jax.jit

@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from src.utils import flatten_nn_params
 
 
-def compute_ggn_vp(state, Z, w, model_type, full_set_size=None):
+def compute_ggn_vp(state, Z, model_type, full_set_size=None):
     """
     Returns oracle for GGN vector product, i.e. (v |-> GGN @ v).
     @params
@@ -49,12 +49,12 @@ def compute_ggn_vp(state, Z, w, model_type, full_set_size=None):
             return acc + vjp_fn(hv)[0]
         
         
-        return jax.lax.fori_loop(0, M, body_fun, total) * recal_term # ! * w
+        return jax.lax.fori_loop(0, M, body_fun, total) * recal_term
             
     return ggn_vp
 
 
-def compute_ggn_dense(state, Z, w, model_type, full_set_size=None):
+def compute_ggn_dense(state, Z, model_type, full_set_size=None):
     """
     Computes the GGN, instantiating everything along the way.
     @params
@@ -97,7 +97,6 @@ def compute_ggn_dense(state, Z, w, model_type, full_set_size=None):
     # recalibration term
     N = full_set_size or M
     GGN *= N / M
-    # GGN *= w
 
     return GGN, flat_params, unravel_fn
     
