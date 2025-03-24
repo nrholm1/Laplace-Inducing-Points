@@ -15,10 +15,13 @@ def compute_ggn_vp(state, Z, w, model_type, full_set_size=None):
         model_type: "regressor"|"classifier"
         full_set_size: (if using inducing points or minibatching) size of full data set.
     """
-    flat_params, unravel_fn = flatten_nn_params(state.params)
+    # flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params['params'])
+    flat_params, unravel_fn = flatten_nn_params(state.params['params'])
     M = Z.shape[0]
     N = full_set_size or M
     recal_term = N / M
+    if model_type == "regressor": # handle closed form MSE hessian
+        recal_term *= jnp.exp( - state.params['logvar']['logvar'])
     
     def model_fun(flatp, zi):
         p_unr = unravel_fn(flatp)
@@ -45,10 +48,8 @@ def compute_ggn_vp(state, Z, w, model_type, full_set_size=None):
             _, vjp_fn = jax.vjp(fzi, flat_params)           # Compute the vector–Jacobian product: J_z^T @ (H_z @ (J_z @ v)).
             return acc + vjp_fn(hv)[0]
         
-        if model_type == "regressor": # handle closed form MSE hessian
-            recal_term *= jnp.exp( - state.params['params']['logvar'])
-            
-        return jax.lax.fori_loop(0, M, body_fun, total) * recal_term * w
+        
+        return jax.lax.fori_loop(0, M, body_fun, total) * recal_term # ! * w
             
     return ggn_vp
 
@@ -62,7 +63,7 @@ def compute_ggn_dense(state, Z, w, model_type, full_set_size=None):
         model_type: "regressor"|"classifier"
         full_set_size: (if using inducing points or minibatching) size of full data set.
     """
-    flat_params, unravel_fn = flatten_nn_params(state.params)
+    flat_params, unravel_fn = flatten_nn_params(state.params['params'])
 
     def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
@@ -90,13 +91,13 @@ def compute_ggn_dense(state, Z, w, model_type, full_set_size=None):
     
     if model_type == "regressor":
         # ! hessian for regression - equivalent simply to a scalar coefficient
-        varinv = jnp.exp( - state.params['params']['logvar']) 
+        varinv = jnp.exp( - state.params['logvar']['logvar']) 
         GGN *= varinv
     
     # recalibration term
     N = full_set_size or M
     GGN *= N / M
-    GGN *= w
+    # GGN *= w
 
     return GGN, flat_params, unravel_fn
     

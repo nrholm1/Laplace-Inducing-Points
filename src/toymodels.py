@@ -12,8 +12,15 @@ class SimpleRegressor(nn.Module):
             X = nn.gelu(nn.Dense(features=self.numh)(X))
         mu = nn.Dense(features=1)(X)
         if return_logvar:
-            logvar = self.param('logvar', nn.initializers.zeros, ())
-            return mu, logvar
+            zeros_key = jax.random.PRNGKey(0)
+            logvar = self.variable(
+                col="logvar",
+                name="logvar",
+                init_fn=nn.initializers.zeros,
+                key=zeros_key,
+                shape=()
+            )
+            return mu, logvar.value
         else:
             return mu
     

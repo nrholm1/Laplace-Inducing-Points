@@ -13,7 +13,7 @@ def flatten_nn_params(params):
     # ! maybe inefficient?
     # Remove the 'logvar' parameter
     params_without_logvar = {
-        k: v for k, v in params['params'].items() if k != 'logvar'
+        k: v for k, v in params.items() if k != 'logvar'
     }
     return jax.flatten_util.ravel_pytree({'params': params_without_logvar})
     

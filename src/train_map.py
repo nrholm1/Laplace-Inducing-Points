@@ -9,27 +9,28 @@ from tqdm import tqdm
 
 # Regression Loss Functions
 @partial(jax.jit, static_argnames=("apply_fn",))
-def nl_likelihood_fun_regression(apply_fn, params, batch):
+def nl_likelihood_fun_regression(apply_fn, variables, batch):
     # For regression, we use a closed-form negative log-likelihood.
     x, y = batch
-    yhat, logvar = apply_fn(params, x)
+    yhat, logvar = apply_fn(variables, x)
     var = jnp.exp(logvar)
     se = optax.squared_error(yhat, y)
     return 0.5 * (jnp.log(2 * jnp.pi * var) + se / var).sum()
 
 @jax.jit
-def nl_prior_fun(params, stdev):
+def nl_prior_fun(variables, stdev):
     """Simple (negative log) L2 prior."""
     sum_of_squares = lambda t: jnp.sum(t**2)
-    param_leaves = jax.tree_util.tree_leaves(params)
+    param_leaves = jax.tree_util.tree_leaves(variables["params"])
+    # param_leaves = jax.tree_util.tree_leaves(variables)
     l2 = jnp.sum(jnp.array([sum_of_squares(p) for p in param_leaves]))
     return 0.5 / (stdev**2) * l2
 
 @jax.jit
-def nl_posterior_fun_regression(state, params, batch, prior_std=1.0):
+def nl_posterior_fun_regression(state, variables, batch, prior_std=1.0):
     # Posterior is exactly the likelihood plus prior (here both are jitted)
-    nll = nl_likelihood_fun_regression(state.apply_fn, params, batch)
-    log_prior = nl_prior_fun(state.params, prior_std)
+    nll = nl_likelihood_fun_regression(state.apply_fn, variables, batch)
+    log_prior = nl_prior_fun(variables, prior_std)
     return nll + log_prior
 
 # Regression Training and Evaluation Steps
@@ -106,6 +107,6 @@ def train_map(state, trainloader, testloader, model_type, *args, num_epochs=100,
                 else:
                     loss = eval_step(state, batch) # TODO make eval MAP step?
                 eloss += loss
-            additional_info = f"[var={jnp.exp(state.params['params']['logvar']):.3f}] " if model_type == "regressor" else f"[Avg. eval acc={eacc/len(testloader):.3f}]"
+            additional_info = f"[var={jnp.exp(state.params['logvar']['logvar']):.3f}] " if model_type == "regressor" else f"[Avg. eval acc={eacc/len(testloader):.3f}]"
             pbar.set_description(f"{additional_info}Avg. eval loss: {eloss/len(testloader):.3f} ")
     return state

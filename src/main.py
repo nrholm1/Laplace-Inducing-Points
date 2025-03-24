@@ -21,7 +21,6 @@ from train_inducing import train_inducing_points
 from lla import posterior_lla_dense, predict_lla_dense
 from utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary
     
-
 # jax.config.update("jax_enable_x64", True)
 
 
@@ -42,6 +41,7 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
                         text="full", color='orange', zorder=5)
         scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
         scatterp(xtrain, ytrain, zorder=1, label='Train data')
+        
     elif model_type == "classifier":
         from src.toydata import plot_binary_classification_data
         plot_binary_classification_data(xtrain, ytrain)
@@ -170,17 +170,18 @@ def main():
     num_c = model_cfg.get("num_c", 2) if model_type == "classifier" else 1
     model_seed = model_cfg["rng_seed"]
 
+    rng_model = jax.random.PRNGKey(model_seed)
     if model_type == "regressor":
+        # rng_model = {'params': rng_model, 'logvar': zeros_rng}
         model = SimpleRegressor(numh=num_h, numl=num_l)
     elif model_type == "classifier":
         model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
 
-    rng_model = jax.random.PRNGKey(model_seed)
     dummy_inp = jax.random.normal(rng_model, shape=(num_h, num_c))
-    params = model.init(rng_model, dummy_inp)
+    variables = model.init(rng_model, dummy_inp)
 
     print("== Model Summary ==")
-    print_summary(params)
+    print_summary(variables)
 
     # Load optimization config (combined for MAP and inducing)
     opt_cfg = load_yaml(args.optimization_config)
@@ -205,7 +206,7 @@ def main():
     # optimizer_map = optax.sgd(lr_map)
     model_state = train_state.TrainState.create(
         apply_fn=model.apply,
-        params=params,
+        params=variables,
         tx=optimizer_map
     )
     map_ckpt_prefix = f"map_{args.dataset}"

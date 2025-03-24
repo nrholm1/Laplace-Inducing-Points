@@ -3,20 +3,34 @@ import jax
 import jax.numpy as jnp
 
 
-def stochastic_trace_estimator_full(X, seed, num_samples=1_000):
+def stochastic_trace_estimator_dense(X, seed, num_samples=1_000):
     """
     Uses Girard-Hutchinson estimator on fully instantiated matrices.
-    # ! quite unstable! Bug or just slow MSE convergence?
     """
     def sample_eps(X, seed, num_samples): 
-        return jax.random.rademacher(key=seed, shape=(num_samples, X.shape[0]))
+        return jax.random.rademacher(key=seed, shape=(num_samples, X.shape[0]), dtype=X.dtype)
         # return jax.random.normal(key=seed, shape=(num_samples, X.shape[0]))
     def single_estimate(X, eps):
         y = jnp.matmul(X, eps)
         return jnp.dot(eps, y)
-    eps = sample_eps(X, seed=seed, num_samples=num_samples)
+    Eps = sample_eps(X, seed=seed, num_samples=num_samples)
     
-    return jax.vmap(single_estimate, in_axes=(None,0))(X,eps)
+    return jax.vmap(single_estimate, in_axes=(None, 0))(X,Eps).mean()
+
+
+def stochastic_trace_estimator_mvp(Xfun, D, seed, num_samples=1_000, dtype=jnp.float32):
+    """
+    Uses Girard-Hutchinson estimator with linear operator oracles.
+    """
+    
+    def sample_eps(seed, num_samples): 
+        return jax.random.rademacher(key=seed, shape=(num_samples, D), dtype=dtype)
+        # return jax.random.normal(key=seed, shape=(num_samples, X.shape[0]))
+    def single_estimate(Xfun, eps):
+        return jnp.dot(eps, Xfun(eps))
+    Eps = sample_eps(seed=seed, num_samples=num_samples)
+    
+    return jax.vmap(single_estimate, in_axes=(None, 0))(Xfun,Eps).mean()
 
 
 def hutchpp_dense(X, seed, num_samples=10):
@@ -61,7 +75,7 @@ def hutchpp_mvp(Xfun, D, seed, num_samples=10):
     
     estimates = jnp.trace(quad_term(Q)) + (1/num_samples) * jnp.trace(quad_term(orthproj@G.T))
     
-    return estimates.mean()
+    return estimates
 
 
 def hutchpp_inv_mvp(Xfun, D, seed, num_samples=10):

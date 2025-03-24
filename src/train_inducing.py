@@ -7,7 +7,7 @@ from tqdm import tqdm
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
 
 from lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
-from src.stochtrace import hutchpp_mvp, na_hutchpp_mvp
+from src.stochtrace import hutchpp_mvp, na_hutchpp_mvp, stochastic_trace_estimator_mvp
 from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params
 
@@ -67,7 +67,7 @@ def naive_objective(params, dataset, state, alpha, rng, num_mc_samples, model_ty
     return - (loglik_term - kl_term) + reg_term
 
 
-def alternative_objective_scalable(params, x, state, alpha, model_type, seed, full_set_size=None):
+def alternative_objective_scalable(params, x, state, alpha, model_type, key, full_set_size=None):
     xind, w = params
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
     w_fake = jnp.array(1.)
@@ -83,21 +83,27 @@ def alternative_objective_scalable(params, x, state, alpha, model_type, seed, fu
     # ! option 1: use conjugate gradient 
     @jax.jit
     def S_induc_inv_vp(v):
+        # ! problems with backprop needing to store?
         x,info = jax.scipy.sparse.linalg.cg(A=S_induc_vp, b=v)
         return x
     
     @jax.jit
     def composite_vp(v):
         # computes S_Z^{-1} @ S_full
-        # return S_full_vp(S_induc_inv_vp(v))
-        return jax.vmap(S_full_vp, in_axes=1, out_axes=1)(
-            jax.vmap(S_induc_inv_vp, in_axes=1, out_axes=1)(v)
-        )
+        return S_full_vp(S_induc_inv_vp(v))                      # ! for hutchinson
+        # return jax.vmap(S_full_vp, in_axes=1, out_axes=1)(     # ! for hutch++
+        #     jax.vmap(S_induc_inv_vp, in_axes=1, out_axes=1)(v)
+        # )
     
     # ! option 2: investigate woodbury matrix identity to avoid inverse maybe?
     # todo ...maybe?
     
-    trace_term = hutchpp_mvp(composite_vp, D=D, seed=seed)
+    # todo try to reuse randomly sampled vectors from stochtrace estimator for logdet estimator
+    
+    # todo try simple hutchinson estimator
+    trace_term = stochastic_trace_estimator_mvp(composite_vp, D=D, seed=key, num_samples=20)
+    # ! or
+    # trace_term = hutchpp_mvp(composite_vp, D=D, seed=key, num_samples=5)
     # ! or 
     # trace_term = na_hutchpp_mvp(composite_vp, D=D, seed=seed)
     
@@ -109,14 +115,14 @@ def alternative_objective_scalable(params, x, state, alpha, model_type, seed, fu
         tridiag_sym = decomp.tridiag_sym(num_matvecs)
         problem = funm.integrand_funm_sym_logdet(tridiag_sym)
         x_like = jnp.ones((D,), dtype=float)
-        sampler = matfree_stochtrace.sampler_normal(x_like, num=150)
+        sampler = matfree_stochtrace.sampler_normal(x_like, num=100)
         estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
-        logdet = estimator(Xfun, seed)
+        logdet = estimator(Xfun, key)
         return logdet
     
     logdet_term = stoch_lanczos_quadrature(S_induc_vp)
     
-    return trace_term + logdet_term
+    return trace_term + logdet_term # todo missing beta*D term?
     
 
 def alternative_objective(params, x, state, alpha, model_type, full_set_size=None):
@@ -157,7 +163,7 @@ def optimize_step(params, dataset, map_model_state, alpha, opt_state, rng, xopti
         dataset, 
         map_model_state, 
         alpha, 
-        seed=rng,
+        key=rng,
         # num_mc_samples=num_mc_samples,
         model_type=model_type, 
         full_set_size=full_set_size
