@@ -12,6 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import torch.utils.data as data
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
 
 from src.nplot import scatterp
 
@@ -53,7 +55,7 @@ def get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=numpy_co
     return train_loader, test_loader
 
 
-"""SYNTHETIC DATASETS"""
+"""DATASETS"""
 
 sine_wave_fun = lambda x: jnp.sin(2 * x) + x * jnp.cos(5 * x)
 
@@ -86,6 +88,7 @@ def data_ex5():
     return x, y
 
 def data_mnist_subset_89():
+    """MNIST subset, top 2 PCA components."""
     data = jnp.load('data/mnist_subset_89.npz')
     Xtrain = data['Xtrain']
     Xtest = data['Xtest']
@@ -94,6 +97,32 @@ def data_mnist_subset_89():
     X = jnp.vstack([Xtrain, Xtest])
     y = jnp.hstack([ytrain, ytest])    
     return X,y
+
+
+def load_mnist_numpy(train=True):
+    """
+    Loads MNIST using torchvision, converts images to numpy arrays,
+    and reshapes each image to (28,28,1).
+    (MNIST from torchvision is already normalized to [0,1].)
+    """
+    transform = transforms.Compose([
+        transforms.ToTensor(),  # returns a tensor of shape (1, 28, 28)
+    ])
+    
+    dataset = datasets.MNIST(root='./data', train=train, download=True, transform=transform)
+    images, labels = [], []
+    
+    for img, label in dataset:
+        # Reshape from (1, 28, 28) to (28, 28, 1)
+        images.append(img.reshape(28,28,1))
+        labels.append(label)
+        
+    images = np.stack(images, axis=0)  # Shape: (N, 28, 28, 1)
+    labels = np.array(labels)          # Shape: (N,)
+    return images, labels
+
+
+"""TINY PLOTTING UTILS"""
 
 
 def plot_regression_data(x,y):

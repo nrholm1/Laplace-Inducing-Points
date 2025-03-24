@@ -19,7 +19,7 @@ from src.nplot import plot_bc_boundary_contour, plot_bc_heatmap, scatterp, linep
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
 from src.lla import posterior_lla_dense, predict_lla_dense
-from src.utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary
+from src.utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
     
 # jax.config.update("jax_enable_x64", True)
 
@@ -143,9 +143,7 @@ def main():
     args = parser.parse_args()
 
     # Print selected options
-    print('# Options')
-    for key, value in sorted(vars(args).items()):
-        print(key, '=', value)
+    print_options(args)
         
     # Load data
     datafile = f"data/{args.dataset}.npz"
@@ -254,9 +252,6 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    # xinit = jnp.linspace(xtrain.min(), xtrain.max(), m_induc)[:,None]
-    # xinit = jax.random.uniform(rng_inducing, shape=(m_induc,1)) * (xtrain.max() - xtrain.min()) - (jnp.abs(xtrain.min()))
-    # xinit = jax.random.uniform(rng_inducing, shape=(m_induc,2)) * (xtrain.max() - xtrain.min()) - (jnp.abs(xtrain.min()))
     m_induc = min(m_induc, len(test_dataset))
     _, test_loader = get_dataloaders(train_dataset, test_dataset, m_induc)
     xinit = next(iter(test_loader))[0]
