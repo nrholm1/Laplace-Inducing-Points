@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
 
-from lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
+from src.lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
 from src.stochtrace import hutchpp_mvp, na_hutchpp_mvp, stochastic_trace_estimator_mvp
 from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params

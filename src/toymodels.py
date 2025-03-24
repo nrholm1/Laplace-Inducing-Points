@@ -36,3 +36,5 @@ class SimpleClassifier(nn.Module):
             X = nn.tanh(nn.Dense(features=self.numh)(X))
         logits = nn.Dense(features=self.numc)(X)
         return logits
+    
+

@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 import torch.utils.data as data
 
+from src.nplot import scatterp
+
 """DATASET CLASSES AND UTILS"""
 
 class JAXDataset(data.Dataset):
@@ -95,11 +97,9 @@ def data_mnist_subset_89():
 
 
 def plot_regression_data(x,y):
-    from nplot import scatterp
     scatterp(x, y, label='data')
 
 def plot_binary_classification_data(x,y):
-    from nplot import scatterp
     scatterp(*x[y==0].T, label='Class 0', color='salmon', zorder=2)
     scatterp(*x[y==1].T, label='Class 1', zorder=2)
     

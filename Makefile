@@ -33,7 +33,7 @@ clean:
 # PROJECT RULES                                                                 #
 #################################################################################
 
-main = src/main.py
+toymain = toymain.py
 datamain = src/toydata.py
 
 DEVICE = cpu
@@ -42,13 +42,13 @@ DATASET = xor
 MODEL = toyclassifier
 
 run:
-	$(PYTHON_INTERPRETER) src/main.py $(mode) \
+	$(PYTHON_INTERPRETER) $(toymain) $(mode) \
 		--dataset $(DATASET) \
 		--model_config config/$(MODEL).yml \
 		--optimization_config config/optimization_$(MODEL).yml
 
 debug_run:
-	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(main) $(mode) \
+	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(toymain) $(mode) \
 		--dataset $(DATASET) \
 		--model_config config/$(MODEL).yml \
 		--optimization_config config/optimization_$(MODEL).yml > debug.log 2>&1 &
