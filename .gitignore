@@ -5,3 +5,4 @@ fig/*
 *.log
 .vscode
 .DS_Store
+data/*

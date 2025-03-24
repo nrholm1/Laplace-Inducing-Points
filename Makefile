@@ -38,8 +38,8 @@ datamain = src/toydata.py
 
 DEVICE = cpu
 
-DATASET = xor
-MODEL = toyclassifier
+DATASET = sine
+MODEL = toyregressor
 
 run:
 	$(PYTHON_INTERPRETER) $(toymain) $(mode) \
@@ -76,11 +76,12 @@ data:
 
 
 N1 = 300
-N2 = 300
+N2 = 2500
 EPS1 = 0.7
 EPS2 = 0.3
 SEED1 = 1526
 SEED2 = 6251
+ARGS1="--split_in_middle"
 all-data:
-	$(PYTHON_INTERPRETER) $(datamain) --dataset xor --n_samples $(N1) --noise $(EPS1) --seed $(SEED1) $(ARGS1)
-	$(PYTHON_INTERPRETER) $(datamain) --dataset sine --n_samples $(N2) --noise $(EPS2) --seed $(SEED2) $(ARGS2)
+	$(PYTHON_INTERPRETER) $(datamain) --dataset sine --n_samples $(N1) --noise $(EPS1) --seed $(SEED1) $(ARGS1)
+	$(PYTHON_INTERPRETER) $(datamain) --dataset xor --n_samples $(N2) --noise $(EPS2) --seed $(SEED2) $(ARGS2)
