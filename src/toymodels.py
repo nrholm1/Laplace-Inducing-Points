@@ -41,7 +41,9 @@ class SimpleClassifier(nn.Module):
 class CNN(nn.Module):
     @nn.compact
     def __call__(self, x):
-        # Input shape: (batch, 28, 28, 1)
+        # Input shape should be: (batch, 28, 28, 1)
+        if x.ndim == 3: # ! assume missing batch dim!
+            x = x[None,:]
         x = nn.Conv(features=32, kernel_size=(3, 3), padding='SAME')(x)
         x = nn.relu(x)
         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
