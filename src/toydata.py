@@ -50,8 +50,8 @@ def numpy_collate_fn(batch):
 
 
 def get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=numpy_collate_fn):
-    train_loader = data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-    test_loader = data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    train_loader = data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True)
+    test_loader = data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, drop_last=True)
     return train_loader, test_loader
 
 
