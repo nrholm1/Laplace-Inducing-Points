@@ -71,8 +71,10 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
         D -= 1 # ! subtract logvar parameter!
     
     # compute matrix free linear operator oracles
+    print("Computing curvature")
     S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
     S_induc_vp = compute_curvature_approx(state, z, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
+    print("Finished computing curvature")
     
     # ! option 1: use conjugate gradient 
     @jax.jit
@@ -95,7 +97,9 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
     # todo try to reuse randomly sampled vectors from stochtrace estimator for logdet estimator
     
     # todo try simple hutchinson estimator
-    trace_term = stochastic_trace_estimator_mvp(composite_vp, D=D, seed=key, num_samples=20)
+    print("Estimating 5 traces")
+    trace_term = stochastic_trace_estimator_mvp(composite_vp, D=D, seed=key, num_samples=5)
+    print("Finished estimating 5 traces")
     # ! or
     # trace_term = hutchpp_mvp(composite_vp, D=D, seed=key, num_samples=5)
     # ! or 
@@ -114,7 +118,9 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
         logdet = estimator(Xfun, key)
         return logdet
     
+    print("Estimating 100 logdet")
     logdet_term = stoch_lanczos_quadrature(S_induc_vp)
+    print("Finished estimating 100 logdet")
     
     return trace_term + logdet_term # todo missing beta*D term?
     
@@ -145,11 +151,12 @@ def alternative_objective(z, x, state, alpha, model_type, key, full_set_size=Non
 variational_grad = jax.value_and_grad(alternative_objective_scalable)
 
 
-@partial(jax.jit, static_argnames=('model_type', 'xoptimizer', 'num_mc_samples', 'full_set_size'))
-def optimize_step(z, dataset, map_model_state, alpha, opt_state, rng, xoptimizer, num_mc_samples, model_type, full_set_size=None):
+@partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size'))
+def optimize_step(z, x, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, full_set_size=None):
+    print("Computing loss+grads")
     loss, grads = variational_grad(
         z, 
-        dataset, 
+        x, 
         map_model_state, 
         alpha, 
         key=rng,
@@ -157,8 +164,11 @@ def optimize_step(z, dataset, map_model_state, alpha, opt_state, rng, xoptimizer
         model_type=model_type, 
         full_set_size=full_set_size
     )
-    updates, new_opt_state = xoptimizer.update(grads, opt_state)
+    print("Finished computing loss+grads")
+    updates, new_opt_state = zoptimizer.update(grads, opt_state)
+    print("Finished computing updates")
     new_params = optax.apply_updates(z, updates)
+    print("Finished applying updates")
     return new_params, new_opt_state, loss
 
 
@@ -194,13 +204,12 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         z, opt_state, loss = optimize_step(
             z, 
             x_sample, 
-            # dataset_sample, # for naive_objective
-            map_model_state, 
-            alpha, 
-            opt_state, 
-            rng_step,
+            map_model_state=map_model_state, 
+            alpha=alpha, 
+            opt_state=opt_state, 
+            rng=rng_step,
             model_type=model_type,
-            xoptimizer=zoptimizer, 
+            zoptimizer=zoptimizer, 
             num_mc_samples=num_mc_samples, 
             full_set_size=full_set_size
         )
