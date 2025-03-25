@@ -259,6 +259,7 @@ def main():
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
         
+        # with jax.profiler.trace("trace"):
         zinducing = train_inducing_points(
             map_model_state, 
             zinit, 

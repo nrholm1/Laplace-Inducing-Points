@@ -6,3 +6,4 @@ fig/*
 .vscode
 .DS_Store
 data/*
+trace/*

@@ -1,4 +1,5 @@
 from functools import partial
+import functools
 import jax
 import jax.numpy as jnp
 import optax
@@ -77,13 +78,13 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
     print("Finished computing curvature")
     
     # ! option 1: use conjugate gradient 
-    @jax.jit
+    # @jax.jit
     def S_induc_inv_vp(v):
         # ! problems with backprop needing to store?
         x,info = jax.scipy.sparse.linalg.cg(A=S_induc_vp, b=v)
         return x
     
-    @jax.jit
+    # @jax.jit
     def composite_vp(v):
         # computes S_Z^{-1} @ S_full
         return S_full_vp(S_induc_inv_vp(v))                      # ! for hutchinson
@@ -97,13 +98,17 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
     # todo try to reuse randomly sampled vectors from stochtrace estimator for logdet estimator
     
     # todo try simple hutchinson estimator
-    print("Estimating 5 traces")
-    trace_term = stochastic_trace_estimator_mvp(composite_vp, D=D, seed=key, num_samples=5)
-    print("Finished estimating 5 traces")
-    # ! or
-    # trace_term = hutchpp_mvp(composite_vp, D=D, seed=key, num_samples=5)
-    # ! or 
-    # trace_term = na_hutchpp_mvp(composite_vp, D=D, seed=seed)
+    # trace_term = stochastic_trace_estimator_mvp(composite_vp, D=D, seed=key, num_samples=20)
+    def stoch_trace(Xfun):
+        integrand = matfree_stochtrace.integrand_trace()
+        x0 = jnp.ones((D,))
+        sampler = matfree_stochtrace.sampler_rademacher(x0, num=1)
+        estimator = matfree_stochtrace.estimator(integrand, sampler)
+        estimator = functools.partial(estimator, Xfun)
+        keys = jax.random.split(key, num=1)
+        traces = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
+        return traces.mean()
+    trace_term = stoch_trace(composite_vp)
     
     # ! use stochastic Lanczos quadrature
     def stoch_lanczos_quadrature(Xfun):
@@ -112,18 +117,18 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
         num_matvecs = 3
         tridiag_sym = decomp.tridiag_sym(num_matvecs)
         problem = funm.integrand_funm_sym_logdet(tridiag_sym)
-        x_like = jnp.ones((D,), dtype=float)
-        sampler = matfree_stochtrace.sampler_normal(x_like, num=100)
+        x0 = jnp.ones((D,), dtype=float)
+        sampler = matfree_stochtrace.sampler_normal(x0, num=1)
         estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
-        logdet = estimator(Xfun, key)
-        return logdet
+        estimator = functools.partial(estimator, Xfun)
+        keys = jax.random.split(key, num=2)
+        logdets = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
+        return logdets.mean()
     
-    print("Estimating 100 logdet")
     logdet_term = stoch_lanczos_quadrature(S_induc_vp)
-    print("Finished estimating 100 logdet")
     
     return trace_term + logdet_term # todo missing beta*D term?
-    
+
 
 def alternative_objective(z, x, state, alpha, model_type, key, full_set_size=None):
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)

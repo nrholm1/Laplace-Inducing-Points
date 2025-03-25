@@ -99,19 +99,19 @@ def main():
         # Train inducing points and save a checkpoint
         zoptimizer = optax.adam(lr_inducing)
         
-        with jax.profiler.trace("trace"):
-            zinducing = train_inducing_points(
-                map_model_state, 
-                zinit, 
-                zoptimizer,
-                dataloader=train_loader,
-                rng=rng_inducing,
-                model_type=model_type,
-                num_mc_samples=mc_samples,
-                alpha=alpha_inducing,
-                num_steps=epochs_inducing,
-                full_set_size=xtrain.shape[0],
-            )
+        # with jax.profiler.trace("trace"):
+        zinducing = train_inducing_points(
+            map_model_state, 
+            zinit, 
+            zoptimizer,
+            dataloader=train_loader,
+            rng=rng_inducing,
+            model_type=model_type,
+            num_mc_samples=mc_samples,
+            alpha=alpha_inducing,
+            num_steps=epochs_inducing,
+            full_set_size=xtrain.shape[0],
+        )
         
         # Save the inducing points (zinduc)
         save_array_checkpoint(
