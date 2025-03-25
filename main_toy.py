@@ -184,7 +184,7 @@ def main():
     # Load optimization config (combined for MAP and inducing)
     opt_cfg = load_yaml(args.optimization_config)
     map_cfg = opt_cfg["map"]
-    induc_cfg = opt_cfg["inducing"]
+    inducing_cfg = opt_cfg["inducing"]
 
     batch_size = map_cfg["batch_size"]
     epochs_map = map_cfg["epochs_map"]
@@ -192,12 +192,12 @@ def main():
     alpha_map = map_cfg["alpha"]
     seed_map = map_cfg["seed"]
 
-    m_induc = induc_cfg["m_induc"]
-    epochs_induc = induc_cfg["epochs_induc"]
-    lr_induc = induc_cfg["lr_induc"]
-    alpha_induc = induc_cfg["alpha"]
-    mc_samples = induc_cfg["mc_samples"]
-    seed_inducing = induc_cfg["seed"]
+    m_inducing = inducing_cfg["m_induc"]
+    epochs_inducing = inducing_cfg["epochs_induc"]
+    lr_inducing = inducing_cfg["lr_induc"]
+    alpha_inducing = inducing_cfg["alpha"]
+    mc_samples = inducing_cfg["mc_samples"]
+    seed_inducing = inducing_cfg["seed"]
 
     # Build train_state for MAP
     optimizer_map = optax.adam(lr_map)
@@ -238,8 +238,8 @@ def main():
                  model_type=model_type, 
                  dataset_name=args.dataset)
         
+        print("[DONE] MAP training.")
         if args.mode == "train_map":
-            print("[DONE] MAP training only.")
             return
     else:
         map_model_state = load_checkpoint(
@@ -252,14 +252,14 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    m_induc = min(m_induc, len(test_dataset))
-    _, test_loader = get_dataloaders(train_dataset, test_dataset, m_induc)
+    m_inducing = min(m_inducing, len(test_dataset))
+    _, test_loader = get_dataloaders(train_dataset, test_dataset, m_inducing)
     zinit = next(iter(test_loader))[0]
 
     if args.mode in ["train_inducing", "full_pipeline"]:
-        zoptimizer = optax.adam(lr_induc)
+        zoptimizer = optax.adam(lr_inducing)
         
-        zinduc = train_inducing_points(
+        zinducing = train_inducing_points(
             map_model_state, 
             zinit, 
             zoptimizer,
@@ -267,28 +267,26 @@ def main():
             rng=rng_inducing,
             model_type=model_type,
             num_mc_samples=mc_samples,
-            alpha=alpha_induc,
-            num_steps=epochs_induc,
+            alpha=alpha_inducing,
+            num_steps=epochs_inducing,
             full_set_size=xtrain.shape[0],
         )
 
         # Save the inducing points (zinduc)
         save_array_checkpoint(
-            array=zinduc,
+            array=zinducing,
             ckpt_dir=args.ckpt_induc,
             name=induc_ckpt_name,
-            step=epochs_induc
+            step=epochs_inducing
         )
     
-        if args.mode == "train_inducing":
-            print("[DONE] Inducing training only.")
-            # return # ! don't return, visualize
+        print("[DONE] Inducing training only.")
     else:
         # Load both the inducing points (zinduc)
-        zinduc = load_array_checkpoint(
+        zinducing = load_array_checkpoint(
             ckpt_dir=args.ckpt_induc,
             name=induc_ckpt_name,
-            step=epochs_induc
+            step=epochs_inducing
         )
 
     # =========== PART C: Visualization ===========
@@ -297,10 +295,10 @@ def main():
         plot_inducing(model_type, map_model_state, 
                       xtrain, ytrain, 
                       xtest, ytest,
-                      zinduc, 
+                      zinducing, 
                       prior_std, rng_inducing,
                       model, optimizer_map, 
-                      m_induc, epochs_induc, 
+                      m_inducing, epochs_inducing, 
                       dataset_name=args.dataset)
         print("[DONE] Visualization complete.")
 
