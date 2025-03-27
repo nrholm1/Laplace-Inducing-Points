@@ -73,7 +73,7 @@ def main():
     # Print selected options
     print_options(args)
     
-    epochs_map = 1
+    epochs_map = 5
     batch_size = 32
     seed_inducing = 1337
     m_inducing = 200
@@ -176,11 +176,26 @@ def main():
         plt.rcParams['text.usetex'] = True
 
         
-        nsamples = 48
-        nrows = 4
+        nsamples = 16
+        nrows = 2
+        figsize = (16,8)
+        colors = [
+            "#e41a1c",  # Red
+            "#377eb8",  # Blue
+            "#4daf4a",  # Green
+            "#984ea3",  # Purple
+            "#ff7f00",  # Orange
+            "#ffff33",  # Yellow
+            "#a65628",  # Brown
+            "#f781bf",  # Pink
+            "#999999",  # Grey
+            "#66c2a5"   # Teal
+        ]
+        # figsize = (30,15)
         
         # get a random test set batch to visualize
-        _, test_loader = get_dataloaders(train_dataset, test_dataset, nsamples)
+        supersample = max(nsamples, 1024) # make a superset of samples and choose the top nsamples highest entropy
+        _, test_loader = get_dataloaders(train_dataset, test_dataset, supersample)
         # data_batch = next(iter(test_loader))
         _iter = iter(test_loader)
         next(_iter)
@@ -199,23 +214,33 @@ def main():
             return preds, probs
         
         preds, probs = pred_step(map_model_state.params, X)
+        entropies = jax.scipy.special.entr(probs).sum(axis=1)
+        topk_entr = jnp.argsort(entropies, descending=True)[:nsamples]
+        X = X[topk_entr]
+        y = y[topk_entr]
+        probs = probs[topk_entr]
+        preds = preds[topk_entr]
 
-        fig,axs = plt.subplots(2*nrows, int(nsamples/nrows), figsize=(30,15))
+        fig,axs = plt.subplots(2*nrows, int(nsamples/nrows), figsize=figsize)
         for i,ax in enumerate(axs[1::2].flatten()):
-            ax.set_title(f"Prediction: {preds[i]}")
+            # ax.set_title(f"Pred: {preds[i]}")
+            # ax.set_title(f"Pred={preds[i]} ({int(y[i])})")
             ax.imshow(X[i], cmap='gray_r')
             ax.grid(False)
             ax.axis(False)
         
         for i,ax in enumerate(axs[::2].flatten()):
-            ax.bar(classes, probs[i])
+            ax.set_facecolor('white')
+            ax.bar(classes, probs[i], color=colors, edgecolor='#333')
+            ax.set_ylim(0.0, 1.02)
+            # ax.grid(True, color='#ddd')
             ax.grid(False)
             ax.get_yaxis().set_visible(False)
             ax.set_xticks(classes)
             ax.set_xticklabels(classes)
         
         # plt.suptitle(f"[MNIST] Inducing LLA after {epochs_inducing} steps.")
-        plt.suptitle(f"[MNIST] Placeholder title.")
+        plt.suptitle(f"MNIST | High entropy samples.")
         plt.tight_layout()
         plt.savefig("fig/mnist.pdf")
     
