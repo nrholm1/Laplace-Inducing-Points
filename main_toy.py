@@ -281,7 +281,7 @@ def main():
             step=epochs_inducing
         )
     
-        print("[DONE] Inducing training only.")
+        print("[DONE] Inducing training.")
     else:
         # Load both the inducing points (zinduc)
         zinducing = load_array_checkpoint(

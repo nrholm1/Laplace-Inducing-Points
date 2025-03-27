@@ -1,5 +1,7 @@
 import argparse
+import pdb
 # import pdb
+from matplotlib import pyplot as plt
 import numpy as np
 import torch
 from seaborn import set_style
@@ -7,6 +9,7 @@ from seaborn import set_style
 import jax
 import jax.numpy as jnp 
 from flax.training import train_state
+from flax.linen import softmax
 import optax
 from tqdm import tqdm
 
@@ -32,10 +35,27 @@ def create_train_state(rng, model, learning_rate, momentum):
     return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 
+def plot_map_mnist(map_model_state, data_batch):
+        X,y = data_batch
+        fig,axs = plt.subplots(4,4,figsize=(12,12))
+        
+        # prediction
+        logits = map_model_state.apply_fn(map_model_state.params, X)
+        yhat = logits.argmax(axis=1)
 
-def train_map_wrapper(model_state, num_epochs, train_loader, test_loader):
-    train_map(model_state, train_loader, test_loader, model_type="classifier", num_epochs=num_epochs)
-    return model_state
+        for i,ax in enumerate(axs.flatten()):
+            ax.set_title(f"Prediction: {yhat[i]}")
+            ax.imshow(X[i], cmap='gray')
+            ax.grid(False)
+        
+        plt.suptitle(f"[MNIST] MAP estimator")
+        plt.tight_layout()
+        plt.savefig("fig/map_mnist.pdf")
+
+
+
+def visualize_lla_mnist():
+    ...
 
 
 
@@ -56,12 +76,12 @@ def main():
     epochs_map = 1
     batch_size = 32
     seed_inducing = 1337
-    m_inducing = 300
+    m_inducing = 200
     lr_inducing = 0.01
     model_type = "classifier"
     mc_samples = 0 # dummy param
     alpha_inducing = 0.5
-    epochs_inducing = 1
+    epochs_inducing = 100
     
 
     xtrain, ytrain = load_mnist_numpy(train=True)
@@ -77,8 +97,8 @@ def main():
     # =========== MAP Training ===========
     if args.mode in ["train_map", "full_pipeline"]:
         # Train MAP and save a checkpoint.
-        map_model_state = train_map_wrapper(model_state, epochs_map, train_loader, test_loader)
-        save_checkpoint(map_model_state, ckpt_dir="./checkpoint/map", prefix="mnist", step=epochs_map)
+        map_model_state = train_map(model_state, train_loader, test_loader, model_type="classifier", num_epochs=epochs_map)
+        save_checkpoint(map_model_state, ckpt_dir="./checkpoint/map", prefix=map_ckpt_prefix, step=epochs_map)
         print("[DONE] MAP training.")
         if args.mode == "train_map":
             return
@@ -138,7 +158,66 @@ def main():
         # 2. Sample from full LLA (if possible? Maybe we will have to train a smaller CNN)
         # 3. Sample from inducing point LLA
         # 4. Plot uncertainties over class distributions - maybe we will have to get a less certain MAP model.
-        ...
+        
+        # Update global font settings
+        plt.rcParams.update({
+            'font.size': 12,                  # Base font size for text
+            'font.family': 'serif',           # Use serif fonts
+            # 'font.serif': ['Times New Roman', 'DejaVu Serif'],  # List of preferred serif fonts
+            'font.serif': ['Computer Modern Roman', 'Times New Roman', 'DejaVu Serif'],  # List of preferred serif fonts
+            'font.sans-serif': ['Arial', 'DejaVu Sans'],         # Preferred sans-serif fonts (if needed)
+            'axes.titlesize': 20,             # Font size for axes titles
+            'axes.labelsize': 14,             # Font size for x and y labels
+            'xtick.labelsize': 14,            # Font size for x-axis tick labels
+            'ytick.labelsize': 14,            # Font size for y-axis tick labels
+            'legend.fontsize': 14,            # Font size for legend text
+            'figure.titlesize': 24,            # Font size for the figure title
+        })
+        plt.rcParams['text.usetex'] = True
+
+        
+        nsamples = 48
+        nrows = 4
+        
+        # get a random test set batch to visualize
+        _, test_loader = get_dataloaders(train_dataset, test_dataset, nsamples)
+        # data_batch = next(iter(test_loader))
+        _iter = iter(test_loader)
+        next(_iter)
+        data_batch = next(_iter)
+        
+        # todo visualize_lla_mnist(zinducing, map_model_state, data_batch)
+        X,y = data_batch
+        classes = jnp.arange(10)
+        
+        # compile prediction 
+        @jax.jit
+        def pred_step(params, X):
+            logits = map_model_state.apply_fn(params, X)
+            preds = logits.argmax(axis=1)
+            probs = softmax(logits, axis=1)
+            return preds, probs
+        
+        preds, probs = pred_step(map_model_state.params, X)
+
+        fig,axs = plt.subplots(2*nrows, int(nsamples/nrows), figsize=(30,15))
+        for i,ax in enumerate(axs[1::2].flatten()):
+            ax.set_title(f"Prediction: {preds[i]}")
+            ax.imshow(X[i], cmap='gray_r')
+            ax.grid(False)
+            ax.axis(False)
+        
+        for i,ax in enumerate(axs[::2].flatten()):
+            ax.bar(classes, probs[i])
+            ax.grid(False)
+            ax.get_yaxis().set_visible(False)
+            ax.set_xticks(classes)
+            ax.set_xticklabels(classes)
+        
+        # plt.suptitle(f"[MNIST] Inducing LLA after {epochs_inducing} steps.")
+        plt.suptitle(f"[MNIST] Placeholder title.")
+        plt.tight_layout()
+        plt.savefig("fig/mnist.pdf")
     
     # pdb.set_trace()
 

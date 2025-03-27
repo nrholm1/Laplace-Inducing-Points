@@ -7,3 +7,5 @@ fig/*
 .DS_Store
 data/*
 trace/*
+*.out
+job_*
