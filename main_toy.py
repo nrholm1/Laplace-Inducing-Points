@@ -19,7 +19,8 @@ from src.nplot import plot_bc_boundary_contour, plot_bc_heatmap, scatterp, linep
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
 from src.lla import posterior_lla_dense, predict_lla_dense
-from src.utils import load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
+from src.sample import sample
+from src.utils import flatten_nn_params, load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
     
 # jax.config.update("jax_enable_x64", True)
 
@@ -56,7 +57,7 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
     plt.savefig(f"fig/{dataset_name}{model_type}map.pdf")
 
 
-def plot_inducing(model_type, map_model_state, 
+def plot_inducing_dense(model_type, map_model_state, 
                   xtrain, ytrain, 
                   xtest, ytest,
                   zinduc, 
@@ -105,6 +106,77 @@ def plot_inducing(model_type, map_model_state,
         for i in range(10):
             rng_theta_sample = jax.random.fold_in(rng_theta_sample, i)
             theta_sample = postdist.sample(seed=rng_theta_sample)
+            sampled_model_state = train_state.TrainState.create(
+                apply_fn=model.apply,
+                params=unravel_fn(theta_sample),
+                tx=optimizer_map
+            )
+            label = "Decision boundary samples" if i==0 else None
+            plot_bc_boundary_contour(sampled_model_state, xtrain.min(), xtrain.max(),
+                                       color='yellow', alpha=0.5, zorder=6, label=label)
+    
+        plot_bc_heatmap(fig, ax, map_model_state, xtrain.min(), xtrain.max())
+
+    # Adjust the legend to appear on top of the data points.
+    leg = plt.legend(loc='lower right', framealpha=1.0)
+    leg.set_zorder(10)
+    plt.tight_layout()
+    os.makedirs("fig", exist_ok=True)
+    plt.savefig(f"fig/{dataset_name}_{model_type}_lla.pdf")
+
+
+def plot_inducing_scalable(model_type, map_model_state, 
+                  xtrain, ytrain, 
+                  xtest, ytest,
+                  zinduc, 
+                  prior_std, rng_inducing,
+                  model, optimizer_map, 
+                  m_induc, epochs_induc, dataset_name):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    plt.title(f"Induced LLA / {m_induc} inducing points, {epochs_induc} steps")
+    # plt.title(f"Full LLA / {xtrain.shape[0]} data points")
+    
+    rng_theta_sample = jax.random.fold_in(rng_inducing, 0)
+
+    if model_type == "regressor":  # 1D regression case
+        ... # todo
+        # # Create a linear grid for predictions
+        # xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
+        # postpreddist_full = predict_lla_dense(
+        #     map_model_state, xlin, xtrain, model_type=model_type, prior_std=prior_std
+        # )
+        # postpreddist_optimized = predict_lla_dense(
+        #     map_model_state, xlin, zinduc, model_type=model_type, prior_std=prior_std,
+        #     full_set_size=xtrain.shape[0]
+        # )
+        
+        # plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
+        #                text="full", color='orange', zorder=5)
+        # plot_cinterval(xlin.squeeze(), postpreddist_optimized.mean(), postpreddist_optimized.stddev(), 
+        #                text="ind. optimized", color='limegreen', zorder=4)
+        
+        # # Plot training and test data
+        # scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
+        # scatterp(xtrain, ytrain, zorder=1, label='Train data')
+        # plot_inducing_points_1D(ax, zinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
+
+    elif model_type == "classifier":  # 2D classification case
+        # Plot the inducing points
+        # plot_binary_classification_data(xtrain, ytrain)
+        scatterp(*zinduc.T, color="yellow", zorder=8, marker="X", label='Inducing points')
+
+        num_samples = 10
+        rng_theta_sample = jax.random.fold_in(rng_inducing, 123)
+        flat_params, unravel_fn = flatten_nn_params(map_model_state.params['params'])
+        D = flat_params.shape[0]
+        theta_samples = sample(map_model_state, zinduc, D, 
+                               alpha=0.5, 
+                               key=rng_theta_sample, 
+                               model_type=model_type, 
+                               num_samples=num_samples)
+        
+        # Plot multiple boundary contours sampled from the posterior
+        for i,theta_sample in enumerate(theta_samples):
             sampled_model_state = train_state.TrainState.create(
                 apply_fn=model.apply,
                 params=unravel_fn(theta_sample),
@@ -293,7 +365,8 @@ def main():
     # =========== PART C: Visualization ===========
     if args.mode in ["visualize", "train_inducing", "full_pipeline"]:
         prior_std = alpha_map**(-0.5) # todo verify this?
-        plot_inducing(model_type, map_model_state, 
+        # plot_inducing_dense(model_type, map_model_state, 
+        plot_inducing_scalable(model_type, map_model_state, 
                       xtrain, ytrain, 
                       xtest, ytest,
                       zinducing, 
