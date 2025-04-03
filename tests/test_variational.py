@@ -12,13 +12,12 @@ from tests.fixtures import classification_2d_data, classifier_state
 
 
 def compute_dense_terms(params, x, state, alpha, model_type, full_set_size=None):
-    xind, w = params
+    xind= params
     
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
     # w_fake = jnp.ones_like(dataset[0])
-    w_fake = jnp.array(1.)
-    S_full_inv, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
-    S_induc,    *_ = compute_curvature_approx_dense(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
+    S_full_inv, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
+    S_induc,    *_ = compute_curvature_approx_dense(state, xind, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
     
     trace_term = jnp.linalg.trace(S_full_inv @ S_induc)
     # sign_full, logdet_full = jnp.linalg.slogdet(S_full_inv)
@@ -31,13 +30,12 @@ def compute_dense_terms(params, x, state, alpha, model_type, full_set_size=None)
 def scalable_trace_term(params, x, state, alpha, model_type, seed, full_set_size=None, trace_estimator=hutchpp_mvp):
     xind, w = params
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    w_fake = jnp.array(1.)
     
     D = count_model_params(state.params)
     
     # compute matrix free linear operator oracles
-    S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size)
-    S_induc_vp = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size)
+    S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
+    S_induc_vp = compute_curvature_approx(state, xind, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
     
     # ! option 1: use conjugate gradient 
     @jax.jit
@@ -58,15 +56,14 @@ def scalable_trace_term(params, x, state, alpha, model_type, seed, full_set_size
 
 
 def scalable_logdet_term(params, x, state, alpha, model_type, seed, full_set_size=None, trace_estimator=hutchpp_mvp):
-    xind, w = params
+    xind = params
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    w_fake = jnp.array(1.)
     
     D = count_model_params(state.params)
     
     # compute matrix free linear operator oracles
     # S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, w=w_fake, model_type=model_type, full_set_size=full_set_size)
-    S_induc_vp = compute_curvature_approx(state, xind, prior_std=prior_std, w=w, model_type=model_type, full_set_size=full_set_size)
+    S_induc_vp = compute_curvature_approx(state, xind, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
     
     def stoch_lanczos_quadrature(Xfun):
         # adapted directly from 
@@ -135,14 +132,14 @@ def test_scalable_logdet_term(classification_2d_data, classifier_state):
     Z = jax.random.uniform(key=induc_key, shape=(M, X.shape[1]))
     alpha = 0.5
     
-    _,logdet_dense = compute_dense_terms(params=(Z,w),
+    _,logdet_dense = compute_dense_terms(params=Z,
                                    x=X, 
                                    state=classifier_state, 
                                    alpha=alpha, 
                                    model_type="classifier", 
                                    full_set_size=N)
     
-    logdet_scalable = scalable_logdet_term(params=(Z,w), 
+    logdet_scalable = scalable_logdet_term(params=Z, 
                                          x=X, 
                                          state=classifier_state, 
                                          alpha=alpha, 
@@ -152,7 +149,7 @@ def test_scalable_logdet_term(classification_2d_data, classifier_state):
                                          trace_estimator=hutchpp_mvp)
     assert jnp.isclose(logdet_dense, logdet_scalable, rtol=1e-2), "MF logdet (hutchpp) does not match dense!"
     
-    logdet_scalable_2 = scalable_logdet_term(params=(Z,w), 
+    logdet_scalable_2 = scalable_logdet_term(params=Z, 
                                          x=X, 
                                          state=classifier_state, 
                                          alpha=alpha, 

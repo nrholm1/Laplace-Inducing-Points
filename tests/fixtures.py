@@ -1,11 +1,16 @@
+import os
 from typing import Callable
+import numpy as np
+import optax
 import pytest
 import jax
 import jax.numpy as jnp
 from flax import struct
+from flax.training import train_state
 
-from src.toymodels import SimpleClassifier
-from src.utils import load_yaml
+from src.toymodels import SimpleClassifier, SimpleRegressor
+from src.utils import load_yaml, load_checkpoint, load_array_checkpoint
+from src.toydata import JAXDataset, get_dataloaders
 
 # jax.config.update("jax_enable_x64", True)
 
@@ -37,7 +42,7 @@ def small_model_state(regression_1d_data):
         b = params['params']["b"]  # scalar
         mu = W * x + b
         if return_logvar:
-            return mu, params['params']['logvar']
+            return mu, params['logvar']['logvar']
         else:
             return mu
 
@@ -47,9 +52,12 @@ def small_model_state(regression_1d_data):
     b_init = jax.random.normal(key_b, ()) * 0.1
     logvar_init = jax.random.uniform(key_logvar, ()) * 0.1
 
-    params = {'params': {
+    params = {
+        'params': {
         "W": W_init,
         "b": b_init,
+    },
+        'logvar': {
         "logvar": logvar_init,
     }}
 
@@ -59,6 +67,55 @@ def small_model_state(regression_1d_data):
         apply_fn: Callable = struct.field(pytree_node=False)
     
     return TrainState(params, apply_fn)
+
+
+@pytest.fixture
+def toyregressor_state():
+    model_cfg = load_yaml("config/toyregressor.yml")
+    model_type = "regressor"
+    num_h = model_cfg["num_h"]
+    num_l = model_cfg["num_l"]
+    
+    
+    model = SimpleRegressor(numh=num_h, numl=num_l)
+    rng_model = jax.random.PRNGKey(model_cfg["rng_seed"])
+    dummy_inp = jax.random.normal(rng_model, shape=(num_h, 1))
+    variables = model.init(rng_model, dummy_inp)
+
+    optimizer_map = optax.adam(1e-3)
+    model_state = train_state.TrainState.create(
+        apply_fn=model.apply,
+        params=variables,
+        tx=optimizer_map
+    )
+    map_model_state = load_checkpoint(
+            ckpt_dir="checkpoint/map/",
+            prefix="map_sine",
+            target=model_state
+        )
+    return map_model_state
+
+
+@pytest.fixture
+def sine_data():
+    # Load data
+    datafile = f"data/sine.npz"
+    if not os.path.exists(datafile):
+        raise FileNotFoundError(f"Data file not found: {datafile}")
+    data_npz = np.load(datafile)
+    x = jax.device_put(data_npz["x"])
+    y = jax.device_put(data_npz["y"])
+    n_samples = x.shape[0]
+    print(f"[INFO] Loaded dataset from {datafile} with {n_samples} samples.")
+    
+    trainsplit = int(0.9 * n_samples)
+    xtrain, ytrain = x[:trainsplit], y[:trainsplit]
+    xtest,  ytest  = x[trainsplit:], y[trainsplit:]
+    train_dataset = JAXDataset(xtrain, ytrain)
+    test_dataset  = JAXDataset(xtest,  ytest)
+    train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, batch_size=min(16, len(test_dataset)))
+    
+    return train_loader, test_loader
 
 
 @pytest.fixture
@@ -135,7 +192,7 @@ def matrix_test_suite():
     M2 = jnp.array([ 
         [  1., 4,  50],
         [-30,  4., 16],
-        [ 12,  6,   5.],
+        [ 12,  6,  5.],
     ])
     M2 = M2@M2.T
     
