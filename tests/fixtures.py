@@ -149,7 +149,7 @@ def classification_2d_data():
 @pytest.fixture
 def classifier_state():
     # Load the YAML configuration file.
-    config_path = "config/tests/toyclassifier.yml"
+    config_path = "config/toyclassifier_xor.yml"
     config = load_yaml(config_path)
     
     # Extract configuration parameters.
@@ -163,19 +163,29 @@ def classifier_state():
     model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
 
     # Initialize the model parameters.
-    rng_model = jax.random.PRNGKey(model_seed)
-    dummy_inp = jax.random.normal(rng_model, shape=(num_h, num_c))
-    params = model.init(rng_model, dummy_inp)
+    # dummy_inp = jax.random.normal(rng_inp, shape=(num_h, num_c))
+    dummy_inp = jnp.ones((1, 2))
+    variables = model.init(jax.random.PRNGKey(model_seed), dummy_inp)
 
-    # Create a state object with the parameters and the model's apply function.
-    # You can use a simple object or a dataclass; here we use a simple object.
-    class State:
-        pass
+    optimizer_map = optax.adam(1e-3)
+    model_state = train_state.TrainState.create(
+        apply_fn=model.apply,
+        params=variables,
+        tx=optimizer_map
+    )
+    model_state = load_checkpoint(
+            ckpt_dir="checkpoint/map/",
+            prefix="map_xor",
+            target=model_state
+        )
 
-    state = State()
-    state.params = params
-    state.apply_fn = model.apply
-    return state
+    # class State:
+    #     pass
+
+    # state = State()
+    # state.params = params
+    # state.apply_fn = model.apply
+    return model_state
 
 
 @pytest.fixture

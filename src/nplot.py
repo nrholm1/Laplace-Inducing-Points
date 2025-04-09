@@ -18,7 +18,7 @@ class Colors(str, Enum):
     darkgray = '#333'
     
 def plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax, sharp_boundary=False):
-    cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", [Colors.paleblue, 'salmon'])
+    cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", [Colors.paleblue, "white", 'salmon'])
     t = jnp.linspace(tmin, tmax, 100)
     X,Y = jnp.meshgrid(t, t, indexing='ij')
     model_inputs = jnp.stack([X, Y], axis=-1)

@@ -74,10 +74,6 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
 
 
 
-
-
-
-
 def compute_ggn_vp(state, Z, model_type, full_set_size=None):
     """
     Returns oracle for GGN vector product, i.e. (v |-> GGN @ v).

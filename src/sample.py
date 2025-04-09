@@ -28,7 +28,7 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None):
     From thm (1.2) in https://nhigham.com/wp-content/uploads/2023/02/fhl23.pdf
     """
     Wfun, WTfun = compute_W_vps(state, Z, model_type, full_set_size=full_set_size)
-    Wfun_b, WTfun_b = compute_W_vps(state, Z, model_type, full_set_size=full_set_size, blockwise=True)
+    Wfun_b, WTfun_b = compute_W_vps(state, Z, model_type, full_set_size=full_set_size, blockwise=True) # todo use for alternating projection
 
     def composite_vp(v):
         return WTfun(Wfun(v))
@@ -40,7 +40,33 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None):
     def nullproj_vp(v): # verify: mult with GGN should output 0
         return v - Wfun(composite_inv_vp(WTfun(v)))
     
-    nullproj_term = lambda v: 1/jnp.sqrt(alpha) * nullproj_vp(v) # todo Alternating projection stuff!
+    def composite_vp_b(i,v):
+        return WTfun_b(i, Wfun_b(i, v))
+    
+    def composite_inv_vp_b(i,v):
+        x,info = jax.scipy.sparse.linalg.cg(A=lambda v: composite_vp_b(i,v), b=v)
+        return x
+    
+    def nullproj_fun_b(i,v):
+        return v - Wfun_b(i, composite_inv_vp_b(i, WTfun_b(i,v)))
+    
+    # ? version that shuffles the minibatch order
+    def nullproj_approx_shuffled(v, key, steps=5):
+        def outer_body(step, state):
+            v, key = state
+            # generate a new permutation for each outer iteration
+            key, subkey = jax.random.split(key)
+            perm = jax.random.permutation(subkey, N)
+            def inner_body(i, v):
+                b = perm[i]
+                return nullproj_fun_b(b, v)
+            v = jax.lax.fori_loop(0, N, inner_body, v)
+            return (v, key)
+        v, _ = jax.lax.fori_loop(0, steps, outer_body, (v, key))
+        return v
+    
+    # nullproj_term = lambda v: 1/jnp.sqrt(alpha) * nullproj_vp(v) # direct projection!
+    nullproj_term = lambda v: 1/jnp.sqrt(alpha) * nullproj_approx_shuffled(v, key=jax.random.PRNGKey(589423982), steps=100) # Alternating projection stuff! # todo handle key!!
     
     M = Z.shape[0]
     N = full_set_size or M
@@ -49,7 +75,8 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None):
     Wshape = WTfun(dummy_primal).shape
     
     invsqrt_fun = dense_funm_sym_eigh(lambda x: 1.0/jnp.sqrt(x))
-    tridiag = decomp.tridiag_sym(min(16,M))  # todo maybe set num_matvecs according to sample size - i.e. number of inducing points
+    # tridiag = decomp.tridiag_sym(min(16,M))  # todo maybe set num_matvecs according to sample size - i.e. number of inducing points
+    tridiag = decomp.tridiag_sym(M)  # todo maybe set num_matvecs according to sample size - i.e. number of inducing points
     invmatsqrt = funm_lanczos_sym(invsqrt_fun, tridiag)
 
     def invmatsqrt_term(V):
@@ -67,7 +94,7 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None):
             Umat = Uflat.reshape(*Wshape)
             # 2) apply operator in matrix form
             #    This is alpha*U + beta*(WTfun(Wfun(U))),
-            WTUmat = WTfun(Wfun(Umat))  # shape (M,K)
+            WTUmat = composite_vp(Umat)  # shape (M,K)
             WTUmat_flat = WTUmat.reshape(-1)  # shape (M*K,)
             # 3) also flatten the "alpha * Umat" part:
             return alpha * Uflat + beta * WTUmat_flat
@@ -84,7 +111,9 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None):
     def outer_fun(v):
         return Wfun(
             composite_inv_vp(
-                invmatsqrt_term(WTfun(v))
+                invmatsqrt_term(
+                    WTfun(v)
+                )
             )
         )
     

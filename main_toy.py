@@ -18,7 +18,7 @@ from src.nplot import plot_bc_boundary_contour, plot_bc_heatmap, scatterp, linep
 
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
-from src.lla import posterior_lla_dense, predict_lla_dense
+from src.lla import materialize_covariance, posterior_lla_dense, predict_lla_dense, predict_lla_fun
 from src.sample import sample
 from src.utils import flatten_nn_params, load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
     
@@ -46,8 +46,9 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
     elif model_type == "classifier":
         from src.toydata import plot_binary_classification_data
         plot_binary_classification_data(xtrain, ytrain)
-        plot_bc_heatmap(fig, ax, map_model_state, xtrain.min(), xtrain.max())
-        plot_bc_boundary_contour( map_model_state, xtrain.min(), xtrain.max(), color='#3f3', alpha=1., label='Decision boundary')
+        tmin, tmax = xtrain.min() - 1.5, xtrain.max() + 1.5
+        plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax)
+        # plot_bc_boundary_contour( map_model_state, tmin, tmax, color='#3f3', alpha=1., label='Decision boundary')
         
     plt.legend(loc='lower right', framealpha=1.0)
     plt.tight_layout()
@@ -139,26 +140,27 @@ def plot_inducing_scalable(model_type, map_model_state,
     rng_theta_sample = jax.random.fold_in(rng_inducing, 0)
 
     if model_type == "regressor":  # 1D regression case
-        ... # todo
-        # # Create a linear grid for predictions
-        # xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
-        # postpreddist_full = predict_lla_dense(
-        #     map_model_state, xlin, xtrain, model_type=model_type, prior_std=prior_std
-        # )
-        # postpreddist_optimized = predict_lla_dense(
-        #     map_model_state, xlin, zinduc, model_type=model_type, prior_std=prior_std,
-        #     full_set_size=xtrain.shape[0]
-        # )
+        # Create a linear grid for predictions
+        xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
+        fmu_full, fcov_vp_full = predict_lla_fun(
+            map_model_state, xlin, xtrain, model_type=model_type, prior_std=prior_std
+        )
+        fmu_opt, fcov_vp_opt = predict_lla_fun(
+            map_model_state, xlin, zinduc, model_type=model_type, prior_std=prior_std,
+            full_set_size=xtrain.shape[0]
+        )
+        fcov_full = materialize_covariance(fcov_vp_full, *fmu_full.shape, mode='diag').squeeze()
+        fcov_opt = materialize_covariance(fcov_vp_opt, *fmu_full.shape, mode='diag').squeeze()
         
-        # plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
-        #                text="full", color='orange', zorder=5)
-        # plot_cinterval(xlin.squeeze(), postpreddist_optimized.mean(), postpreddist_optimized.stddev(), 
-        #                text="ind. optimized", color='limegreen', zorder=4)
+        plot_cinterval(xlin.squeeze(), fmu_full.squeeze(), jnp.sqrt(fcov_full), 
+                       text="full", color='orange', zorder=5)
+        plot_cinterval(xlin.squeeze(), fmu_opt.squeeze(), jnp.sqrt(fcov_opt), 
+                       text="ind. optimized", color='limegreen', zorder=4)
         
-        # # Plot training and test data
-        # scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
-        # scatterp(xtrain, ytrain, zorder=1, label='Train data')
-        # plot_inducing_points_1D(ax, zinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
+        # Plot training and test data
+        scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
+        scatterp(xtrain, ytrain, zorder=1, label='Train data')
+        plot_inducing_points_1D(ax, zinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
 
     elif model_type == "classifier":  # 2D classification case
         # Plot the inducing points
@@ -176,6 +178,7 @@ def plot_inducing_scalable(model_type, map_model_state,
                                num_samples=num_samples)
         
         # Plot multiple boundary contours sampled from the posterior
+        tmin, tmax = xtrain.min() - 1.5, xtrain.max() + 1.5
         for i,theta_sample in enumerate(theta_samples):
             sampled_model_state = train_state.TrainState.create(
                 apply_fn=model.apply,
@@ -183,10 +186,10 @@ def plot_inducing_scalable(model_type, map_model_state,
                 tx=optimizer_map
             )
             label = "Decision boundary samples" if i==0 else None
-            plot_bc_boundary_contour(sampled_model_state, xtrain.min(), xtrain.max(),
+            plot_bc_boundary_contour(sampled_model_state, tmin, tmax,
                                        color='yellow', alpha=0.5, zorder=6, label=label)
     
-        plot_bc_heatmap(fig, ax, map_model_state, xtrain.min(), xtrain.max())
+        plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax)
 
     # Adjust the legend to appear on top of the data points.
     leg = plt.legend(loc='lower right', framealpha=1.0)
@@ -247,7 +250,7 @@ def main():
     elif model_type == "classifier":
         model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
 
-    dummy_inp = jax.random.normal(rng_model, shape=(num_h, num_c))
+    dummy_inp = jnp.ones((1, *xtrain[0].shape))
     variables = model.init(rng_model, dummy_inp)
 
     print("== Model Summary ==")
@@ -273,7 +276,6 @@ def main():
 
     # Build train_state for MAP
     optimizer_map = optax.adam(lr_map)
-    # optimizer_map = optax.sgd(lr_map)
     model_state = train_state.TrainState.create(
         apply_fn=model.apply,
         params=variables,
@@ -324,9 +326,10 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    m_inducing = min(m_inducing, len(test_dataset))
-    _, test_loader = get_dataloaders(train_dataset, test_dataset, m_inducing)
-    zinit = next(iter(test_loader))[0]
+    # m_inducing = min(m_inducing, len(test_dataset))
+    train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, m_inducing)
+    # zinit = next(iter(test_loader))[0]
+    zinit = next(iter(train_loader))[0]
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
@@ -365,8 +368,8 @@ def main():
     # =========== PART C: Visualization ===========
     if args.mode in ["visualize", "train_inducing", "full_pipeline"]:
         prior_std = alpha_map**(-0.5) # todo verify this?
-        # plot_inducing_dense(model_type, map_model_state, 
-        plot_inducing_scalable(model_type, map_model_state, 
+        plot_inducing_dense(model_type, map_model_state, 
+        # plot_inducing_scalable(model_type, map_model_state, 
                       xtrain, ytrain, 
                       xtest, ytest,
                       zinducing, 

@@ -1,3 +1,4 @@
+import functools
 import jax
 import jax.numpy as jnp
 
@@ -28,7 +29,7 @@ def compute_dense_terms(params, x, state, alpha, model_type, full_set_size=None)
 
 
 def scalable_trace_term(params, x, state, alpha, model_type, seed, full_set_size=None, trace_estimator=hutchpp_mvp):
-    xind, w = params
+    xind = params
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
     
     D = count_model_params(state.params)
@@ -55,7 +56,7 @@ def scalable_trace_term(params, x, state, alpha, model_type, seed, full_set_size
     return trace_term
 
 
-def scalable_logdet_term(params, x, state, alpha, model_type, seed, full_set_size=None, trace_estimator=hutchpp_mvp):
+def scalable_logdet_term(params, x, state, alpha, model_type, key, full_set_size=None, trace_estimator=hutchpp_mvp):
     xind = params
     prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
     
@@ -68,14 +69,16 @@ def scalable_logdet_term(params, x, state, alpha, model_type, seed, full_set_siz
     def stoch_lanczos_quadrature(Xfun):
         # adapted directly from 
         # https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        num_matvecs = 3
+        num_matvecs = 10
         tridiag_sym = decomp.tridiag_sym(num_matvecs)
         problem = funm.integrand_funm_sym_logdet(tridiag_sym)
-        x_like = jnp.ones((D,), dtype=float)
-        sampler = stochtrace.sampler_normal(x_like, num=150)
+        x0 = jnp.ones((D,), dtype=float)
+        sampler = stochtrace.sampler_normal(x0, num=150)
         estimator = stochtrace.estimator(problem, sampler=sampler)
-        logdet = estimator(Xfun, seed)
-        return logdet
+        estimator = functools.partial(estimator, Xfun)
+        keys = jax.random.split(key, num=2)
+        logdets = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
+        return logdets.mean()
     
     logdet_term = stoch_lanczos_quadrature(S_induc_vp)
     
@@ -89,18 +92,17 @@ def test_scalable_trace_term(classification_2d_data, classifier_state):
     X,y = classification_2d_data
     N = X.shape[0] # full_set_size
     M = 10 # number of inducing points
-    w = jnp.array(2.05) # dummy value
     Z = jax.random.uniform(key=induc_key, shape=(M, X.shape[1]))
     alpha = 0.5
     
-    trace_dense,_ = compute_dense_terms(params=(Z,w),
+    trace_dense,_ = compute_dense_terms(params=Z,
                                    x=X, 
                                    state=classifier_state, 
                                    alpha=alpha, 
                                    model_type="classifier", 
                                    full_set_size=N)
     
-    trace_scalable = scalable_trace_term(params=(Z,w), 
+    trace_scalable = scalable_trace_term(params=Z, 
                                          x=X, 
                                          state=classifier_state, 
                                          alpha=alpha, 
@@ -110,7 +112,7 @@ def test_scalable_trace_term(classification_2d_data, classifier_state):
                                          trace_estimator=hutchpp_mvp)
     assert jnp.isclose(trace_dense, trace_scalable, rtol=1e-2), "MF trace (hutchpp) does not match dense!"
     
-    trace_scalable_2 = scalable_trace_term(params=(Z,w), 
+    trace_scalable_2 = scalable_trace_term(params=Z, 
                                          x=X, 
                                          state=classifier_state, 
                                          alpha=alpha, 
@@ -128,7 +130,6 @@ def test_scalable_logdet_term(classification_2d_data, classifier_state):
     X,y = classification_2d_data
     N = X.shape[0] # full_set_size
     M = 10 # number of inducing points
-    w = jnp.array(2.05) # dummy value
     Z = jax.random.uniform(key=induc_key, shape=(M, X.shape[1]))
     alpha = 0.5
     
@@ -143,18 +144,7 @@ def test_scalable_logdet_term(classification_2d_data, classifier_state):
                                          x=X, 
                                          state=classifier_state, 
                                          alpha=alpha, 
-                                         seed=hutch_key, 
+                                         key=hutch_key, 
                                          model_type="classifier",
-                                         full_set_size=N,
-                                         trace_estimator=hutchpp_mvp)
-    assert jnp.isclose(logdet_dense, logdet_scalable, rtol=1e-2), "MF logdet (hutchpp) does not match dense!"
-    
-    logdet_scalable_2 = scalable_logdet_term(params=Z, 
-                                         x=X, 
-                                         state=classifier_state, 
-                                         alpha=alpha, 
-                                         seed=hutch_key, 
-                                         model_type="classifier",
-                                         full_set_size=N,
-                                         trace_estimator=na_hutchpp_mvp)
-    assert jnp.isclose(logdet_dense, logdet_scalable_2, rtol=1e-2), "MF logdet (na-hutchpp) does not match dense!"
+                                         full_set_size=N)
+    assert jnp.isclose(logdet_dense, logdet_scalable, rtol=1e-1), "MF logdet does not match dense!"

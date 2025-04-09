@@ -38,14 +38,15 @@ datamain = src/toydata.py
 
 DEVICE = cpu
 
-DATASET = sine
-MODEL = toyregressor
+DATASET = banana
+MODEL = toyclassifier
+
 
 run:
 	$(PYTHON_INTERPRETER) $(toymain) $(mode) \
 		--dataset $(DATASET) \
-		--model_config config/$(MODEL).yml \
-		--optimization_config config/optimization_$(MODEL).yml
+		--model_config config/$(MODEL)_$(DATASET).yml \
+		--optimization_config config/optimization_$(MODEL)_$(DATASET).yml
 
 debug_run:
 	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(toymain) $(mode) \
@@ -70,6 +71,8 @@ debug_map:
 	$(MAKE) debug_run mode=train_map
 debug_inducing:
 	$(MAKE) debug_run mode=train_inducing
+debug_visualize:
+	$(MAKE) debug_run mode=visualize
 
 data:
 	$(PYTHON_INTERPRETER) $(datamain) --dataset $(D) --n_samples $(N) --noise $(EPS) --seed $(SEED) $(ARGS)
@@ -77,11 +80,15 @@ data:
 
 N1 = 300
 N2 = 2500
+N3 = 500
 EPS1 = 0.7
 EPS2 = 0.3
+EPS3 = 0.085
 SEED1 = 1526
 SEED2 = 6251
+SEED3 = 584848
 ARGS1="--split_in_middle"
 all-data:
 	$(PYTHON_INTERPRETER) $(datamain) --dataset sine --n_samples $(N1) --noise $(EPS1) --seed $(SEED1) $(ARGS1)
 	$(PYTHON_INTERPRETER) $(datamain) --dataset xor --n_samples $(N2) --noise $(EPS2) --seed $(SEED2) $(ARGS2)
+	$(PYTHON_INTERPRETER) $(datamain) --dataset banana --n_samples $(N3) --noise $(EPS3) --seed $(SEED3) $(ARGS3)

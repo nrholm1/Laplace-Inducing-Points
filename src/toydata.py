@@ -8,6 +8,7 @@ Example usage:
 
 import argparse
 import os
+import pdb
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -82,6 +83,57 @@ def xor_dataset(n, key, noise=0.05):
     x += noise * jax.random.normal(key=noisekey, shape=z.shape)
     return x, y
 
+def banana_dataset(n, key, noise=0.05):
+    x0key, x1key, noisekey = jax.random.split(key, 3)
+    halfn = n // 2
+    
+    # generate the blue arch
+    archn = int(halfn * 0.8)
+    
+    x01 = jax.random.uniform(x0key, shape=(archn, 1), minval=-1., maxval=1.)
+    x02 = jnp.cos(1.3*x01)
+    x02 -= .5
+    x0arch = jnp.concat([x01,x02], axis=1)
+    x0arch += jax.random.normal(key=noisekey, shape=x0arch.shape) * noise
+    
+    # generate the blue line
+    x0key = jax.random.fold_in(x0key, 1)
+    noisekey = jax.random.fold_in(noisekey, 1)
+    linen = halfn - archn
+    x01 = jax.random.uniform(key=x0key, shape=(linen, 1), minval=0., maxval=1.)
+    x02 = 1. - x01 * 0.2
+    x0line = jnp.concat([x01,x02], axis=1)
+    x0line += jax.random.normal(key=noisekey, shape=x0line.shape) * noise
+    
+    y0 = jnp.ones(halfn)
+    
+    # generate the red arch
+    archn = int(halfn * 0.6)
+    
+    x11 = jax.random.uniform(x1key, shape=(archn, 1), minval=-.8, maxval=1.1)
+    x12 = jnp.cos(1.2*x11)
+    x12 -= .25
+    x1arch = jnp.concat([x11,x12], axis=1)
+    x1arch += jax.random.normal(key=noisekey, shape=x1arch.shape) * noise
+    
+    # generate the red blob
+    x1key = jax.random.fold_in(x1key, 1)
+    nkey1,nkey2 = jax.random.split(noisekey, 2)
+    blobn = halfn - archn
+    x11 = jax.random.uniform(key=x1key, shape=(blobn, 1), minval=-.5, maxval=.6)
+    x12 = jax.random.normal(nkey1, x11.shape) * noise * 1.5
+    x1blob = jnp.concat([x11,x12], axis=1)
+    x1blob += jax.random.normal(key=nkey2, shape=x1blob.shape) * noise
+    
+    y1 = jnp.zeros(halfn)
+    
+    x = jnp.concat([x0arch, x0line, x1arch, x1blob], axis=0)
+    y = jnp.concat([y0, y1])
+    
+    randperm = jax.random.permutation(jax.random.fold_in(key, 1337), n)
+    
+    return x[randperm], y[randperm]
+
 def data_ex5():
     data = jnp.load('data/data_exercise5.npz')
     x, y = data['X'], data['y']
@@ -153,6 +205,9 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
     if dataset_name == 'xor':
         x, y = xor_dataset(n, key, noise)
         plot_data(x,y,dataset_name,plot_binary_classification_data)
+    if dataset_name == 'banana':
+        x, y = banana_dataset(n, key, noise)
+        plot_data(x,y,dataset_name,plot_binary_classification_data)
     elif dataset_name == 'sine':
         x, y = sine_wave_dataset(n, key, noise, split_in_middle=split_in_middle)
         plot_data(x,y,dataset_name,plot_regression_data)
@@ -167,7 +222,7 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Utility for creating synthetic toy datasets.")
-    parser.add_argument("--dataset", type=str, default="sine", choices=["sine", "xor"],
+    parser.add_argument("--dataset", type=str, #choices=["sine", "xor", "banana"],
                         help="Which dataset to create.")
     parser.add_argument("--n_samples", type=int, default=128,
                         help="Number of data samples to generate.")

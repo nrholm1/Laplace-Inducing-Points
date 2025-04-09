@@ -47,7 +47,7 @@ def var_kl_fun(q, alpha):
     return kl_term
 
 
-def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, full_set_size=None, reg_coeff=0):
+def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, full_set_size=None):
     q, unravel_fn = posterior_lla_dense(
         state,
         prior_std=alpha,# todo correct alpha used here?
@@ -102,7 +102,7 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
     def stoch_trace(Xfun):
         integrand = matfree_stochtrace.integrand_trace()
         x0 = jnp.ones((D,))
-        sampler = matfree_stochtrace.sampler_rademacher(x0, num=1)
+        sampler = matfree_stochtrace.sampler_rademacher(x0, num=16)
         estimator = matfree_stochtrace.estimator(integrand, sampler)
         estimator = functools.partial(estimator, Xfun)
         keys = jax.random.split(key, num=1)
@@ -114,11 +114,11 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
     def stoch_lanczos_quadrature(Xfun):
         # adapted directly from 
         # https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        num_matvecs = 3
+        num_matvecs = 16
         tridiag_sym = decomp.tridiag_sym(num_matvecs)
         problem = funm.integrand_funm_sym_logdet(tridiag_sym)
         x0 = jnp.ones((D,), dtype=float)
-        sampler = matfree_stochtrace.sampler_normal(x0, num=1)
+        sampler = matfree_stochtrace.sampler_normal(x0, num=16)
         estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
         estimator = functools.partial(estimator, Xfun)
         keys = jax.random.split(key, num=2)
@@ -158,7 +158,7 @@ variational_grad = jax.value_and_grad(alternative_objective_scalable)
 
 @partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size'))
 def optimize_step(z, x, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, full_set_size=None):
-    print("Computing loss+grads")
+    # print("Computing loss+grads")
     loss, grads = variational_grad(
         z, 
         x, 
@@ -169,11 +169,11 @@ def optimize_step(z, x, map_model_state, alpha, opt_state, rng, zoptimizer, num_
         model_type=model_type, 
         full_set_size=full_set_size
     )
-    print("Finished computing loss+grads")
+    # print("Finished computing loss+grads")
     updates, new_opt_state = zoptimizer.update(grads, opt_state)
-    print("Finished computing updates")
+    # print("Finished computing updates")
     new_params = optax.apply_updates(z, updates)
-    print("Finished applying updates")
+    # print("Finished applying updates")
     return new_params, new_opt_state, loss
 
 
