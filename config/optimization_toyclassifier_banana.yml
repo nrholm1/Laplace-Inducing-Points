@@ -7,6 +7,6 @@ map:
 inducing:
   m_induc: 50
   epochs_induc: 100
-  lr_induc: 0.01
+  lr_induc: 0.05
   mc_samples: 5
-  seed: 423155
+  seed: 4231551

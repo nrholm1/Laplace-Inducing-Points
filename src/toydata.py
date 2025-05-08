@@ -15,6 +15,7 @@ import numpy as np
 import torch.utils.data as data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+import matplotlib.pyplot as plt
 
 from src.nplot import scatterp
 
@@ -146,7 +147,7 @@ def banana_dataset(n, key, noise=0.05):
     # generate the red arch
     archn = int(halfn * 0.6)
     
-    x11 = jax.random.uniform(x1key, shape=(archn, 1), minval=-1.8, maxval=1.1)
+    x11 = jax.random.uniform(x1key, shape=(archn, 1), minval=-1.0, maxval=1.1)
     x12 = jnp.cos(1.6*x11)
     x12 -= 0#.25
     x1arch = jnp.concat([x11,x12], axis=1)
@@ -217,9 +218,10 @@ def load_mnist_numpy(train=True):
 def plot_regression_data(x,y):
     scatterp(x, y, label='data')
 
-def plot_binary_classification_data(x,y):
-    scatterp(*x[y==0].T, label='Class 0', color='salmon', zorder=2)
-    scatterp(*x[y==1].T, label='Class 1', zorder=2)
+def plot_binary_classification_data(x,y,ax=plt):
+    scatterp(*x[y==0].T, label='Class 0', color='salmon', zorder=2, ax=ax)
+    scatterp(*x[y==1].T, label='Class 1', zorder=2, ax=ax)
+    
     
 def plot_data(x,y,name,plotf):
     import matplotlib.pyplot as plt

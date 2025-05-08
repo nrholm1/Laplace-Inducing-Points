@@ -3,6 +3,8 @@ import functools
 import pdb
 import jax
 import jax.numpy as jnp
+from matplotlib import pyplot as plt
+import numpy as np
 import optax
 from tqdm import tqdm
 
@@ -12,6 +14,8 @@ from src.lla import posterior_lla_dense, compute_curvature_approx_dense, compute
 from src.stochtrace import hutchpp_mvp, na_hutchpp_mvp, stochastic_trace_estimator_mvp
 from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params
+from src.toydata import plot_binary_classification_data
+from src.nplot import scatterp
 
 
 def sample_params(mu, cov, rng, num_samples=1):
@@ -66,8 +70,6 @@ def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, f
 
 
 def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set_size=None):
-    # prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    
     M = z.shape[0]
     D = count_model_params(state.params)
     if model_type == 'regressor': # todo: handle this better?
@@ -122,16 +124,18 @@ def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set
         # estimator = functools.partial(estimator, Xfun)
         # logdets = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
         # return logdets.mean()
-        logdets = estimator(Xfun, keys[0])
+        logdets = estimator(Xfun, keys[0]) ## todo WHY NAN values???
         return logdets
     logdet_term = stoch_lanczos_quadrature(S_induc_vp)
+    pdb.set_trace()
     return trace_term + logdet_term # ? missing beta*D term? (No, because it is implicitly included in the logdet term...)
 
 
 def alternative_objective(z, x, state, alpha, model_type, key, full_set_size=None):
     # prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    S_full, *_ = compute_curvature_approx_dense(state, x, alpha=alpha, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
-    S_induc_inv,    *_ = compute_curvature_approx_dense(state, z, alpha=alpha, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
+    S_full, *_ = compute_curvature_approx_dense(state, x, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
+    S_induc,    *_ = compute_curvature_approx_dense(state, z, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
+    S_induc_inv = jnp.linalg.inv(S_induc)
     
     """
     =========================================
@@ -154,7 +158,7 @@ def alternative_objective(z, x, state, alpha, model_type, key, full_set_size=Non
 variational_grad = jax.value_and_grad(alternative_objective_scalable)
 
 
-@partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size'))
+# @partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size'))
 def optimize_step(z, x, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, full_set_size=None):
     # print("Computing loss+grads")
     loss, grads = variational_grad(
@@ -175,7 +179,7 @@ def optimize_step(z, x, map_model_state, alpha, opt_state, rng, zoptimizer, num_
     return new_params, new_opt_state, loss
 
 
-def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size):
+def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, plot_full_dataset_fn_debug=None):
     z = zinit
     opt_state = zoptimizer.init(z)
     _iter = iter(dataloader)
@@ -199,10 +203,14 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
     lb = dataset_sample.min(axis=0)
     ub = dataset_sample.max(axis=0)
     
+    # todo for debugging
+    fig, ax = plt.subplots(figsize=(12, 8))
+    trajectory = [] 
+    
     pbar = tqdm(range(num_steps))
     for step in pbar:
         dataset_sample = get_next_sample(num_batches=1)
-        x_sample,_ = dataset_sample
+        x_sample,y_sample = dataset_sample
         rng, rng_step = jax.random.split(rng)
         z, opt_state, loss = optimize_step(
             z, 
@@ -217,8 +225,31 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             full_set_size=full_set_size
         )
         # ! Enforce constraints on x (and w, if necessary)
-        z = jnp.clip(z, lb, ub)
+        # z = jnp.clip(z, lb, ub)
         
         pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
+        
+        # todo for debug: every 10 steps, record & plot
+        if step % 2 == 0:
+            # convert to NumPy for plotting
+            z_np = np.asarray(z)
+            trajectory.append(z_np)
+
+            traj = np.stack(trajectory)    # shape (n_points, 2)
+            ax.clear()
+            ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
+            plot_full_dataset_fn_debug()
+            ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
+            ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
+            ax.set_xlabel('z[0]')
+            ax.set_ylabel('z[1]')
+            ax.set_title(f'Latent Trajectory after {step} steps')
+            scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+            
+            # force a draw
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+            plt.savefig("test.png")
+        
     
     return z

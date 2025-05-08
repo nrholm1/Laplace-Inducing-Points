@@ -103,8 +103,8 @@ def plot_bc_boundary_contour(map_model_state, tmin, tmax, alpha=0.2, color="blac
         plt.plot(float('nan'), color=color, label=label)
 
 
-scatterp = lambda x,y,*args, color=Colors.paleblue, **kwargs: plt.scatter(x, y, edgecolor=Colors.darkgray, color=color, *args, **kwargs)
-linep    = lambda x,y,*args, color=Colors.paleblue, **kwargs: plt.plot(x, y, color=color, linewidth=3, *args, **kwargs)
+scatterp = lambda x,y,*args, ax=plt, color=Colors.paleblue, **kwargs: ax.scatter(x, y, edgecolor=Colors.darkgray, color=color, *args, **kwargs)
+linep    = lambda x,y,*args, ax=plt, color=Colors.paleblue, **kwargs: ax.plot(x, y, color=color, linewidth=3, *args, **kwargs)
 
 def plot_inducing_points_1D(ax, points, *args,
                             offsetp=0.1,

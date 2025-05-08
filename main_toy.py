@@ -106,8 +106,8 @@ def plot_inducing_dense(model_type, map_model_state,
         
         logit_dist = predict_lla_dense(map_model_state,          # MAP state!
                                pts,
-                            #    xtrain,                   # curvature set
-                               zinduc,                   # curvature set
+                               xtrain,                   # curvature set
+                            #    zinduc,                   # curvature set
                                model_type="classifier",
                                alpha=alpha,
                                full_set_size=xtrain.shape[0])
@@ -119,25 +119,65 @@ def plot_inducing_dense(model_type, map_model_state,
                                         sample_shape=(num_mc,))   # (M, N, K)
         probs = jax.nn.softmax(logit_samples, axis=-1)              # (M, N, K)
         mean_probs = probs.mean(axis=0)[:, 0]                       # P(class 1)
+        var_probs = probs.var(axis=0)[:, 0]                       # P(class 1)
 
         Z = mean_probs.reshape(X.shape)
+        Z2 = var_probs.reshape(X.shape)
 
         # 4) plot ---------------------------------------------------------------------
-        fig, ax = plt.subplots(figsize=(8, 5))
-        cmap = mpl.colors.LinearSegmentedColormap.from_list(
-                "bwr", ["#111188", "white", "#881111"])
-        cf = ax.contourf(X, Y, Z, levels=50, cmap=cmap, vmin=0., vmax=1.)
-        fig.colorbar(cf, ax=ax, label=r"$E[y^*|x^*,D]$")
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4))
 
-        plot_binary_classification_data(xtrain, ytrain)
-        scatterp(*zinduc.T, color="yellow", zorder=8, marker="X", label="Inducing points")
-        plt.title("GLM predictive mean")
-        plt.legend(loc="lower right", framealpha=1.0)
-        plt.tight_layout()
+        # — colormaps —
+        cmap1  = mpl.colors.LinearSegmentedColormap.from_list("bwr", ["#111188", "white", "#881111"])
+        cmap2  = mpl.colors.LinearSegmentedColormap.from_list("bwr", ["white", "#000000"])
 
+        # — vmin/vmax for each panel —
+        vmin1, vmax1 = 0.0, 1.0
+        vmin2, vmax2 = 0.0, jnp.round(Z2.max(),2)
+
+        # — explicit level arrays spanning full range —
+        nlevels = 50
+        levels1 = np.linspace(vmin1, vmax1, nlevels)
+        levels2 = np.linspace(vmin2, vmax2, nlevels)
+
+        # — fixed‐norms so colorbar always goes 0→vmax —
+        norm1 = mpl.colors.Normalize(vmin1, vmax1)
+        norm2 = mpl.colors.Normalize(vmin2, vmax2)
+
+        # --- Panel 1: predictive mean ---
+        cf1 = ax[0].contourf(
+            X, Y, Z,
+            levels=levels1,
+            cmap=cmap1,
+            norm=norm1,
+        )
+        cbar1 = fig.colorbar(cf1, ax=ax[0], label=r"$E[y^*|x^*,D]$")
+        cbar1.set_ticks(np.linspace(vmin1, vmax1, 6))  # nice round ticks
+
+        plot_binary_classification_data(xtrain, ytrain, ax=ax[0])
+        ax[0].set_title("GLM predictive mean")
+        ax[0].legend(loc="lower right", framealpha=1.0)
+
+
+        # --- Panel 2: predictive variance ---
+        cf2 = ax[1].contourf(
+            X, Y, Z2,
+            levels=levels2,
+            cmap=cmap2,
+            norm=norm2,
+        )
+        cbar2 = fig.colorbar(cf2, ax=ax[1], label=r"$V[y^*|x^*,D]$")
+        cbar2.set_ticks(np.linspace(vmin2, vmax2, 6))
+
+        plot_binary_classification_data(xtrain, ytrain, ax=ax[1])
+        ax[1].set_title("GLM predictive variance")
+        ax[1].legend(loc="lower right", framealpha=1.0)
+
+        scatterp(*zinduc.T, color="yellow", zorder=8,
+                marker="X", label="Inducing points", ax=ax[0])
+        scatterp(*zinduc.T, color="yellow", zorder=8,
+                marker="X", label="Inducing points", ax=ax[1])
     
-        # plot_heatmap_averaged(fig, ax, states, tmin, tmax, show_variance=False, opacity=1.0, cbarlabel=r"$E[y^*|x^*,D]$")
-
     # Adjust the legend to appear on top of the data points.
     leg = plt.legend(loc='lower right', framealpha=1.0)
     leg.set_zorder(10)
@@ -187,37 +227,7 @@ def plot_inducing_scalable(model_type, map_model_state,
         plot_binary_classification_data(xtrain, ytrain)
         scatterp(*zinduc.T, color="yellow", zorder=8, marker="X", label='Inducing points')
 
-        num_samples = 500
-        rng_theta_sample = jax.random.fold_in(rng_inducing, 123)
-        flat_params, unravel_fn = flatten_nn_params(map_model_state.params['params'])
-        D = flat_params.shape[0]
-        # theta_samples = sample(map_model_state, zinduc, D, 
-        theta_samples = sample(map_model_state, xtrain, D, 
-                               alpha=prior_precision, 
-                               key=rng_theta_sample, 
-                               model_type=model_type, 
-                               num_samples=num_samples,
-                               full_set_size=xtrain.shape[0],
-                               num_proj_steps=50
-                               )
-        
-        # Plot multiple boundary contours sampled from the posterior
-        tmin, tmax = xtrain.min() - 1.5, xtrain.max() + 1.5
-        states = []
-        for i,theta_sample in enumerate(theta_samples):
-            sampled_model_state = train_state.TrainState.create(
-                apply_fn=model.apply,
-                params=unravel_fn(theta_sample),
-                tx=optimizer_map
-            )
-            states.append(sampled_model_state)
-            # if i < 10:
-            #     label = "Decision boundary samples" if i==0 else None
-            #     plot_bc_boundary_contour(sampled_model_state, tmin, tmax,
-            #                             color='yellow', alpha=0.5, zorder=6, label=label)
-    
-        plot_heatmap_averaged(fig, ax, states, tmin, tmax, cbarlabel=r"$E[y^*|x^*,D]$")
-        # plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax)
+        # todo...
 
     # Adjust the legend to appear on top of the data points.
     leg = plt.legend(loc='lower right', framealpha=1.0)
@@ -356,8 +366,9 @@ def main():
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     # m_inducing = min(m_inducing, len(test_dataset))
     train_loader_induc, test_loader = get_dataloaders(train_dataset, test_dataset, m_inducing)
-    # zinit = next(iter(test_loader))[0]
     zinit = next(iter(train_loader_induc))[0]
+    # zinit = jax.random.uniform(key=rng_inducing, shape=zinit.shape, minval=zinit.min()*0.5, maxval=zinit.max()*0.5)
+    
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
@@ -367,13 +378,14 @@ def main():
             map_model_state, 
             zinit, 
             zoptimizer,
-            dataloader=train_loader,
+            dataloader=train_loader_induc,
             rng=rng_inducing,
             model_type=model_type,
             num_mc_samples=mc_samples,
             alpha=alpha,
             num_steps=epochs_inducing,
             full_set_size=xtrain.shape[0],
+            plot_full_dataset_fn_debug= lambda: plot_binary_classification_data(xtrain, ytrain)
         )
 
         # Save the inducing points (zinduc)
