@@ -71,7 +71,7 @@ def small_model_state(regression_1d_data):
 
 @pytest.fixture
 def toyregressor_state():
-    model_cfg = load_yaml("config/toyregressor.yml")
+    model_cfg = load_yaml("config/toyregressor_sine.yml")
     model_type = "regressor"
     num_h = model_cfg["num_h"]
     num_l = model_cfg["num_l"]

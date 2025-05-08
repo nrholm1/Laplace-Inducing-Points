@@ -1,5 +1,5 @@
-num_h: 32
-num_l: 2
+num_h: 16
+num_l: 3
 num_c: 2
 model_type: classifier
 rng_seed: 12345

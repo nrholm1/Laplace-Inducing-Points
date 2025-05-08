@@ -9,13 +9,15 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
     flat_params, unravel_fn = flatten_nn_params(state.params['params'])
     M = Z.shape[0]
     N = full_set_size or M
-
+    recal_term = jnp.sqrt( N/M ) # ! what is the correct recalibration?
+    # recal_term = 1.
+    
     def sqrt_Hi_apply(f_out, vec):
         if model_type == 'regressor':
-            c = (N / M) * jnp.exp(-state.params['logvar']['logvar']) # todo correct closed form?
+            c = jnp.exp(-state.params['logvar']['logvar'])
             return jnp.sqrt(c) * vec
         elif model_type == 'classifier':
-            # Softmax cross-entropy Hessian = diag(p) - p p^T, positive semidefinite
+            # Softmax cross-entropy Hessian = diag(p) - p p^T, PSD
             p = jax.nn.softmax(f_out)   # shape (K,)
             H_i = jnp.diag(p) - jnp.outer(p, p)  # shape (K,K)
             evals, evecs = jnp.linalg.eigh(H_i)  # evals >= 0
@@ -58,15 +60,18 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
         _, vjp_fn = jax.vjp(fzi, flat_params)
         return vjp_fn(h_sqrt_ui)[0]
     
+    # ! recalibrate!
+    rc_W_per_point, rc_WT_per_point = lambda *args,**kwargs: recal_term*W_per_point(*args,**kwargs), lambda *args,**kwargs: recal_term*WT_per_point(*args,**kwargs)
+    
     if blockwise:
-        return W_per_point, WT_per_point
+        return rc_W_per_point, rc_WT_per_point
     
     def WTfun(v):
-        return jax.vmap(WT_per_point, in_axes=(0,None))(jnp.arange(M), v)  # shape (M, K)
+        return jax.vmap(rc_WT_per_point, in_axes=(0,None))(jnp.arange(M), v)  # shape (M, K)
 
     def Wfun(U):
         # vmap over i to get an (M, d) array of per-example contributions
-        per_example = jax.vmap(W_per_point, in_axes=(0, 0))(jnp.arange(M), U)
+        per_example = jax.vmap(rc_W_per_point, in_axes=(0, 0))(jnp.arange(M), U)
         # Sum over the M dimension
         return per_example.sum(axis=0)
 
@@ -90,7 +95,7 @@ def compute_ggn_vp(state, Z, model_type, full_set_size=None):
     N = full_set_size or M
     recal_term = N / M
     if model_type == "regressor": # handle closed form MSE hessian
-        recal_term *= jnp.exp( - state.params['logvar']['logvar'])
+        recal_term *= jnp.exp( - state.params['logvar']['logvar']) # ! just multiply the hessian scalar directly onto the recal_term
     
     def model_fun(flatp, zi):
         p_unr = unravel_fn(flatp)

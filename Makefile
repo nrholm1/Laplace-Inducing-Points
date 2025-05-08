@@ -38,7 +38,7 @@ datamain = src/toydata.py
 
 DEVICE = cpu
 
-DATASET = banana
+DATASET = spiral
 MODEL = toyclassifier
 
 
@@ -51,8 +51,8 @@ run:
 debug_run:
 	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(toymain) $(mode) \
 		--dataset $(DATASET) \
-		--model_config config/$(MODEL).yml \
-		--optimization_config config/optimization_$(MODEL).yml > debug.log 2>&1 &
+		--model_config config/$(MODEL)_$(DATASET).yml \
+		--optimization_config config/optimization_$(MODEL)_$(DATASET).yml > debug.log 2>&1 &
 	sleep 1
 	@echo "debugpy ready"
 
@@ -79,11 +79,11 @@ data:
 
 
 N1 = 300
-N2 = 2500
+N2 = 1280
 N3 = 500
 EPS1 = 0.7
-EPS2 = 0.3
-EPS3 = 0.085
+EPS2 = 0.25
+EPS3 = 0.090
 SEED1 = 1526
 SEED2 = 6251
 SEED3 = 584848

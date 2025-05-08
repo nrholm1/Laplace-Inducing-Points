@@ -9,18 +9,17 @@ from matfree import decomp
 from matfree.funm import funm_lanczos_sym, dense_funm_sym_eigh, funm_arnoldi
 
 from src.lla import posterior_lla_dense, compute_curvature_approx_dense
-from src.sample import sample, inv_matsqrt_vp
+from src.sample import sample, inv_matsqrt_vp, sample_both, sample_dense, inv_matsqrt_dense
 from src.ggn import compute_ggn_dense, compute_W_vps
 from src.utils import flatten_nn_params, is_pd
-from tests.fixtures import regression_1d_data, small_model_state, classifier_state, classification_2d_data, sine_data, toyregressor_state
+from fixtures import regression_1d_data, small_model_state, classifier_state, classification_2d_data, sine_data, toyregressor_state
 
 
 # Test #1: W linear operator
 def test_WT_W_vps(regression_1d_data, small_model_state):
     """
-    1) Compute WT linear operator oracle
-    2) Compute W oracle from WT oracle using jax.linear_transpose
-    3) Verify W(WT(I)) = GGN
+    1) Compute W,WT linear operator oracle
+    2) Verify W(WT(I)) = GGN
     """
     X, y = regression_1d_data
     state = small_model_state    
@@ -47,15 +46,56 @@ def test_WT_W_vps(regression_1d_data, small_model_state):
         return Wfun(WTfun(v))
     
     composite_GGN = jax.vmap(composite_vp, in_axes=0)(I)
+    assert jnp.all(jnp.isclose(composite_GGN, full_GGN, atol=1e-8)), "GGNs don't match!"    
+
+def test_WT_W_vps_2(classification_2d_data, classifier_state):
+    """
+    1) Compute W,WT linear operator oracle
+    2) Verify W(WT(I)) = GGN
+    """
+    jax.config.update("jax_enable_x64", True) # 64 bit floats
+    
+    X, y = classification_2d_data
+    X = X.astype(jnp.float64)
+    y = y.astype(jnp.float64)
+    
+    state = classifier_state
+    state = state.replace(
+        params=jax.tree_util.tree_map(lambda param: param.astype(jnp.float64), state.params)
+    )
+    
+    flat_params, _ = flatten_nn_params(state.params)
+    D = flat_params.shape[0]
+    I = jnp.eye(D)
+    
+    full_GGN, *_ = compute_ggn_dense(state, X,  model_type="classifier")
+    
+    # WTfun = compute_WT_vp(state, X, model_type="regressor")
+    # dummy_primal = jnp.ones(D)
+    # Wfunh = jax.linear_transpose(WTfun, dummy_primal)
+    # def Wfun(v): 
+    #     (vp_res,) = Wfunh(v)
+    #     return vp_res
+    Wfun, WTfun = compute_W_vps(state, X, "classifier")
+    WT_out = jax.vmap(WTfun, in_axes=1)(I)
+    composite_GGN = jax.vmap(Wfun, in_axes=0)(WT_out)
+    
     assert jnp.all(jnp.isclose(composite_GGN, full_GGN, atol=1e-8)), "GGNs don't match!"
+    
+    # test it as a single composite vp
+    def composite_vp(v):
+        return Wfun(WTfun(v))
+    
+    composite_GGN = jax.vmap(composite_vp, in_axes=0)(I)
+    assert jnp.all(jnp.isclose(composite_GGN, full_GGN, atol=1e-8)), "GGNs don't match!"
+
 
 
 # Test #2: [v -> W(W^T@W)^{-1}W^T @ v] composite linear operator
 def test_nullproj(sine_data, toyregressor_state):
     """
-    1) Compute WT linear operator oracle
-    2) Compute W oracle from WT oracle using jax.linear_transpose
-    3) Verify v -> W(
+    1) Compute W,WT linear operator oracle
+    2) Verify v -> W(
                     WTW_inv(
                             WT(v)
                         ) 
@@ -178,10 +218,10 @@ def test_nullproj_classifier(classification_2d_data, classifier_state):
         return jax.lax.fori_loop(0, steps, outer_body, v)
     # ! nonbatched (full) versions
     
-    batched = nullproj_approx_shuffled(dummy_primal, steps=1_000) # ! ridiculous amount of steps
+    batched = nullproj_approx_shuffled(dummy_primal, key=key, steps=1_500) # ! ridiculous amount of steps
     projected = Wfun(WTfun(batched))
 
-    assert jnp.all(jnp.isclose(Wfun(WTfun(projected)), jnp.zeros_like(projected), atol=1.5e-1)), "full_out should be in kernel, i.e. GGN maps it to 0."
+    assert jnp.all(jnp.isclose(projected, jnp.zeros_like(projected), atol=1e-8)), "full_out should be in kernel, i.e. GGN maps it to 0."
 
 
 # Test #3: minibatched/streamed approach to compute
@@ -417,7 +457,7 @@ def test_sample_fun_tiny(regression_1d_data, small_model_state):
     key = jax.random.PRNGKey(1392)
     alpha = 0.5
     
-    post_dist = posterior_lla_dense(small_model_state, X, prior_std=1.0/alpha**0.5, model_type="regressor")
+    post_dist = posterior_lla_dense(small_model_state, X, alpha=1.0/alpha**0.5, model_type="regressor")
     samples = sample(state, X, D, alpha=alpha, key=key, model_type="regressor", num_samples=1_000)
     
     assert jnp.all(jnp.isclose(post_dist.mean(), samples.mean(axis=0), atol=1.1e-1)), "Means are not close!"
@@ -444,13 +484,44 @@ def test_sample_fun_regressor(sine_data, toyregressor_state):
     flat_params, _ = flatten_nn_params(state.params)
     D = flat_params.shape[0]
     
-    post_dist = posterior_lla_dense(state, X, model_type="regressor", prior_std=1.0/alpha**0.5)
+    post_dist = posterior_lla_dense(state, X, model_type="regressor", alpha=alpha)
     samples = sample(state, X, D, alpha=alpha, key=key, model_type="regressor", num_samples=1_500)
     
     # todo try the Chi2 test from Søren here
     
     assert jnp.all(jnp.isclose(post_dist.mean(), samples.mean(axis=0), atol=1.1e-1)), "Means are not close!"
     assert jnp.all(jnp.isclose(post_dist.stddev(), samples.std(axis=0), atol=1e-1)),  "Stdevs are not close!"
+
+
+def test_sample_fun_regressor_dense(sine_data, toyregressor_state):
+    jax.config.update("jax_enable_x64", True) # 64 bit floats
+    
+    train_loader, test_loader = sine_data
+    X,y = next(iter(test_loader))
+    N = X.shape[0]
+    
+    # convert stuff to f64
+    X = X.astype(jnp.float64)
+    y = y.astype(jnp.float64)
+    state = toyregressor_state
+    state = state.replace(
+        params=jax.tree_util.tree_map(lambda param: param.astype(jnp.float64), state.params)
+    )
+    key = jax.random.PRNGKey(1392)
+    alpha = 0.5
+    
+    flat_params, _ = flatten_nn_params(state.params)
+    D = flat_params.shape[0]
+    I_D = jnp.eye(D)
+    
+    post_dist = posterior_lla_dense(state, X, model_type="regressor", alpha=alpha)
+    # samples = sample_dense(state, X, D, alpha=alpha, key=key, model_type="regressor", num_samples=1_500)
+    samples, dense_samples = sample_both(state, X, D, alpha=alpha, key=key, model_type="regressor", num_samples=500)
+    
+    # ggn,*_ = compute_ggn_dense(state, X, "regressor")
+    # invmatsqrt_ggn = inv_matsqrt_dense(state, X, D, alpha, model_type="regressor")
+    
+    pass
 
 
 def test_sample_fun_classifier(classification_2d_data, classifier_state):
@@ -469,7 +540,32 @@ def test_sample_fun_classifier(classification_2d_data, classifier_state):
     key = jax.random.PRNGKey(1392)
     alpha = 0.5
     
-    post_dist = posterior_lla_dense(state, X, model_type="classifier", prior_std=1.0/alpha**0.5)
-    samples = sample(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=1_500)
+    post_dist = posterior_lla_dense(state, X, model_type="classifier", alpha=alpha)
+    samples = sample(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=100)
     
     assert False
+    
+def test_sample_fun_classifier_dense(classification_2d_data, classifier_state):
+    jax.config.update("jax_enable_x64", True) # 64 bit floats
+    
+    X, y = classification_2d_data
+    X = X.astype(jnp.float64)
+    y = y.astype(jnp.float64)
+    
+    state = classifier_state
+    state = state.replace(
+        params=jax.tree_util.tree_map(lambda param: param.astype(jnp.float64), state.params)
+    )
+    key = jax.random.PRNGKey(1392)
+    alpha = 0.5
+    
+    flat_params, _ = flatten_nn_params(state.params)
+    D = flat_params.shape[0]
+    I_D = jnp.eye(D)
+    
+    post_dist = posterior_lla_dense(state, X, model_type="classifier", alpha=alpha)
+    # samples_dense = sample_dense(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=10)
+    # samples = sample(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=10)
+    samples, dense_samples = sample_both(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=10)
+    
+    pass

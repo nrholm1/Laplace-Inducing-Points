@@ -4,6 +4,7 @@ import pdb
 
 import jax
 import jax.numpy as jnp
+import matplotlib as mpl
 import numpy as np
 from flax.training import train_state
 import optax
@@ -14,7 +15,7 @@ set_style('darkgrid')
 
 from src.toymodels import SimpleRegressor, SimpleClassifier
 from src.toydata import JAXDataset, get_dataloaders, plot_binary_classification_data
-from src.nplot import plot_bc_boundary_contour, plot_bc_heatmap, scatterp, linep, plot_cinterval, plot_inducing_points_1D
+from src.nplot import plot_bc_boundary_contour, plot_bc_heatmap, plot_heatmap_averaged, scatterp, linep, plot_cinterval, plot_inducing_points_1D
 
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
@@ -25,7 +26,7 @@ from src.utils import flatten_nn_params, load_yaml, save_checkpoint, load_checkp
 # jax.config.update("jax_enable_x64", True)
 
 
-def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dataset_name=""):
+def plot_map(map_model_state, traindata, testdata, alpha, model_type="", dataset_name=""):
     # ? visualize MAP estimator
     fig, ax = plt.subplots(figsize=(8,5))
     plt.title(f"MAP estimator")
@@ -36,7 +37,7 @@ def plot_map(map_model_state, traindata, testdata, alpha_map, model_type="", dat
     if model_type == "regressor":
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
         postpreddist_full = predict_lla_dense(
-            map_model_state, xlin, xtrain, jnp.array(1.), model_type="regressor", prior_std=alpha_map**(-0.5)
+            map_model_state, xlin, xtrain, model_type="regressor", alpha=alpha
         )
         plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
                         text="full", color='orange', zorder=5)
@@ -62,12 +63,12 @@ def plot_inducing_dense(model_type, map_model_state,
                   xtrain, ytrain, 
                   xtest, ytest,
                   zinduc, 
-                  prior_std, rng_inducing,
+                  alpha, rng_inducing,
                   model, optimizer_map, 
                   m_induc, epochs_induc, dataset_name):
     fig, ax = plt.subplots(figsize=(8, 5))
-    plt.title(f"Induced LLA / {m_induc} inducing points, {epochs_induc} steps")
-    # plt.title(f"Full LLA / {xtrain.shape[0]} data points")
+    # plt.title(f"Induced LLA / {m_induc} inducing points, {epochs_induc} steps")
+    plt.title(f"Full LLA / {xtrain.shape[0]} data points")
     
     rng_theta_sample = jax.random.fold_in(rng_inducing, 0)
 
@@ -75,10 +76,10 @@ def plot_inducing_dense(model_type, map_model_state,
         # Create a linear grid for predictions
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
         postpreddist_full = predict_lla_dense(
-            map_model_state, xlin, xtrain, model_type=model_type, prior_std=prior_std
+            map_model_state, xlin, xtrain, model_type=model_type, alpha=alpha
         )
         postpreddist_optimized = predict_lla_dense(
-            map_model_state, xlin, zinduc, model_type=model_type, prior_std=prior_std,
+            map_model_state, xlin, zinduc, model_type=model_type, alpha=alpha,
             full_set_size=xtrain.shape[0]
         )
         
@@ -93,30 +94,49 @@ def plot_inducing_dense(model_type, map_model_state,
         plot_inducing_points_1D(ax, zinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
 
     elif model_type == "classifier":  # 2D classification case
-        postdist, unravel_fn = posterior_lla_dense(
-            map_model_state, zinduc, model_type=model_type, prior_std=prior_std,
-            full_set_size=xtrain.shape[0], return_unravel_fn=True
-        )
-        
         # Plot the inducing points
-        # plot_binary_classification_data(xtrain, ytrain)
-        scatterp(*zinduc.T, color="yellow", zorder=8, marker="X", label='Inducing points')
+        plot_binary_classification_data(xtrain, ytrain)
+        
+        
+        # tmin, tmax = xtrain.min() - 1.5, xtrain.max() + 1.5
+        tmin, tmax = xtrain.min() - 1.0, xtrain.max() + 1.0
+        t = jnp.linspace(tmin, tmax, 100)
+        X, Y = jnp.meshgrid(t, t, indexing="ij")
+        pts = jnp.stack([X.ravel(), Y.ravel()], axis=-1)  # (num_pts**2, 2)
+        
+        logit_dist = predict_lla_dense(map_model_state,          # MAP state!
+                               pts,
+                            #    xtrain,                   # curvature set
+                               zinduc,                   # curvature set
+                               model_type="classifier",
+                               alpha=alpha,
+                               full_set_size=xtrain.shape[0])
 
-        rng_theta_sample = jax.random.fold_in(rng_inducing, 0)
-        # Plot multiple boundary contours sampled from the posterior
-        for i in range(10):
-            rng_theta_sample = jax.random.fold_in(rng_theta_sample, i)
-            theta_sample = postdist.sample(seed=rng_theta_sample)
-            sampled_model_state = train_state.TrainState.create(
-                apply_fn=model.apply,
-                params=unravel_fn(theta_sample),
-                tx=optimizer_map
-            )
-            label = "Decision boundary samples" if i==0 else None
-            plot_bc_boundary_contour(sampled_model_state, xtrain.min(), xtrain.max(),
-                                       color='yellow', alpha=0.5, zorder=6, label=label)
+        # 3) Monte-Carlo expectation of soft-max --------------------------------------
+        num_mc = 2_000                                              # 30-50 is enough
+        key    = jax.random.PRNGKey(0)
+        logit_samples = logit_dist.sample(seed=key,
+                                        sample_shape=(num_mc,))   # (M, N, K)
+        probs = jax.nn.softmax(logit_samples, axis=-1)              # (M, N, K)
+        mean_probs = probs.mean(axis=0)[:, 0]                       # P(class 1)
+
+        Z = mean_probs.reshape(X.shape)
+
+        # 4) plot ---------------------------------------------------------------------
+        fig, ax = plt.subplots(figsize=(8, 5))
+        cmap = mpl.colors.LinearSegmentedColormap.from_list(
+                "bwr", ["#111188", "white", "#881111"])
+        cf = ax.contourf(X, Y, Z, levels=50, cmap=cmap, vmin=0., vmax=1.)
+        fig.colorbar(cf, ax=ax, label=r"$E[y^*|x^*,D]$")
+
+        plot_binary_classification_data(xtrain, ytrain)
+        scatterp(*zinduc.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+        plt.title("GLM predictive mean")
+        plt.legend(loc="lower right", framealpha=1.0)
+        plt.tight_layout()
+
     
-        plot_bc_heatmap(fig, ax, map_model_state, xtrain.min(), xtrain.max())
+        # plot_heatmap_averaged(fig, ax, states, tmin, tmax, show_variance=False, opacity=1.0, cbarlabel=r"$E[y^*|x^*,D]$")
 
     # Adjust the legend to appear on top of the data points.
     leg = plt.legend(loc='lower right', framealpha=1.0)
@@ -130,7 +150,7 @@ def plot_inducing_scalable(model_type, map_model_state,
                   xtrain, ytrain, 
                   xtest, ytest,
                   zinduc, 
-                  prior_std, rng_inducing,
+                  prior_precision, rng_inducing,
                   model, optimizer_map, 
                   m_induc, epochs_induc, dataset_name):
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -143,10 +163,10 @@ def plot_inducing_scalable(model_type, map_model_state,
         # Create a linear grid for predictions
         xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
         fmu_full, fcov_vp_full = predict_lla_fun(
-            map_model_state, xlin, xtrain, model_type=model_type, prior_std=prior_std
+            map_model_state, xlin, xtrain, model_type=model_type, alpha=prior_precision
         )
         fmu_opt, fcov_vp_opt = predict_lla_fun(
-            map_model_state, xlin, zinduc, model_type=model_type, prior_std=prior_std,
+            map_model_state, xlin, zinduc, model_type=model_type, alpha=prior_precision,
             full_set_size=xtrain.shape[0]
         )
         fcov_full = materialize_covariance(fcov_vp_full, *fmu_full.shape, mode='diag').squeeze()
@@ -164,32 +184,40 @@ def plot_inducing_scalable(model_type, map_model_state,
 
     elif model_type == "classifier":  # 2D classification case
         # Plot the inducing points
-        # plot_binary_classification_data(xtrain, ytrain)
+        plot_binary_classification_data(xtrain, ytrain)
         scatterp(*zinduc.T, color="yellow", zorder=8, marker="X", label='Inducing points')
 
-        num_samples = 10
+        num_samples = 500
         rng_theta_sample = jax.random.fold_in(rng_inducing, 123)
         flat_params, unravel_fn = flatten_nn_params(map_model_state.params['params'])
         D = flat_params.shape[0]
-        theta_samples = sample(map_model_state, zinduc, D, 
-                               alpha=0.5, 
+        # theta_samples = sample(map_model_state, zinduc, D, 
+        theta_samples = sample(map_model_state, xtrain, D, 
+                               alpha=prior_precision, 
                                key=rng_theta_sample, 
                                model_type=model_type, 
-                               num_samples=num_samples)
+                               num_samples=num_samples,
+                               full_set_size=xtrain.shape[0],
+                               num_proj_steps=50
+                               )
         
         # Plot multiple boundary contours sampled from the posterior
         tmin, tmax = xtrain.min() - 1.5, xtrain.max() + 1.5
+        states = []
         for i,theta_sample in enumerate(theta_samples):
             sampled_model_state = train_state.TrainState.create(
                 apply_fn=model.apply,
                 params=unravel_fn(theta_sample),
                 tx=optimizer_map
             )
-            label = "Decision boundary samples" if i==0 else None
-            plot_bc_boundary_contour(sampled_model_state, tmin, tmax,
-                                       color='yellow', alpha=0.5, zorder=6, label=label)
+            states.append(sampled_model_state)
+            # if i < 10:
+            #     label = "Decision boundary samples" if i==0 else None
+            #     plot_bc_boundary_contour(sampled_model_state, tmin, tmax,
+            #                             color='yellow', alpha=0.5, zorder=6, label=label)
     
-        plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax)
+        plot_heatmap_averaged(fig, ax, states, tmin, tmax, cbarlabel=r"$E[y^*|x^*,D]$")
+        # plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax)
 
     # Adjust the legend to appear on top of the data points.
     leg = plt.legend(loc='lower right', framealpha=1.0)
@@ -258,24 +286,24 @@ def main():
 
     # Load optimization config (combined for MAP and inducing)
     opt_cfg = load_yaml(args.optimization_config)
+    alpha = opt_cfg["alpha"]
     map_cfg = opt_cfg["map"]
     inducing_cfg = opt_cfg["inducing"]
 
     batch_size = map_cfg["batch_size"]
     epochs_map = map_cfg["epochs_map"]
     lr_map = map_cfg["lr_map"]
-    alpha_map = map_cfg["alpha"]
     seed_map = map_cfg["seed"]
 
     m_inducing = inducing_cfg["m_induc"]
     epochs_inducing = inducing_cfg["epochs_induc"]
     lr_inducing = inducing_cfg["lr_induc"]
-    alpha_inducing = inducing_cfg["alpha"]
     mc_samples = inducing_cfg["mc_samples"]
     seed_inducing = inducing_cfg["seed"]
 
     # Build train_state for MAP
     optimizer_map = optax.adam(lr_map)
+    # optimizer_map = optax.sgd(lr_map)
     model_state = train_state.TrainState.create(
         apply_fn=model.apply,
         params=variables,
@@ -288,13 +316,12 @@ def main():
     train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, batch_size)
     # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
-        
         map_model_state = train_map(
             model_state,
             train_loader,
             test_loader,
             model_type=model_type,
-            prior_std=alpha_map**(-0.5),
+            prior_precision=alpha,
             num_epochs=epochs_map
         )
         save_checkpoint(
@@ -308,7 +335,7 @@ def main():
         plot_map(map_model_state, 
                  (xtrain, ytrain), 
                  (xtest, ytest), 
-                 alpha_map, 
+                 alpha, 
                  model_type=model_type, 
                  dataset_name=args.dataset)
         
@@ -321,15 +348,16 @@ def main():
             prefix=map_ckpt_prefix,
             target=model_state
         )
-    
+        
+    # pdb.set_trace()
 
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     # m_inducing = min(m_inducing, len(test_dataset))
-    train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, m_inducing)
+    train_loader_induc, test_loader = get_dataloaders(train_dataset, test_dataset, m_inducing)
     # zinit = next(iter(test_loader))[0]
-    zinit = next(iter(train_loader))[0]
+    zinit = next(iter(train_loader_induc))[0]
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
@@ -343,7 +371,7 @@ def main():
             rng=rng_inducing,
             model_type=model_type,
             num_mc_samples=mc_samples,
-            alpha=alpha_inducing,
+            alpha=alpha,
             num_steps=epochs_inducing,
             full_set_size=xtrain.shape[0],
         )
@@ -367,15 +395,17 @@ def main():
 
     # =========== PART C: Visualization ===========
     if args.mode in ["visualize", "train_inducing", "full_pipeline"]:
-        prior_std = alpha_map**(-0.5) # todo verify this?
         plot_inducing_dense(model_type, map_model_state, 
         # plot_inducing_scalable(model_type, map_model_state, 
                       xtrain, ytrain, 
                       xtest, ytest,
                       zinducing, 
-                      prior_std, rng_inducing,
-                      model, optimizer_map, 
-                      m_inducing, epochs_inducing, 
+                      alpha, 
+                      rng_inducing,
+                      model, 
+                      optimizer_map, 
+                      m_inducing, 
+                      epochs_inducing, 
                       dataset_name=args.dataset)
         print("[DONE] Visualization complete.")
 

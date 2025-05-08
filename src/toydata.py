@@ -83,6 +83,42 @@ def xor_dataset(n, key, noise=0.05):
     x += noise * jax.random.normal(key=noisekey, shape=z.shape)
     return x, y
 
+def spiral_dataset(n, key, noise=0.05):
+    assert n % 2 == 0, "n should be even so classes are balanced"
+    n_per_class = n // 2
+    k1, k2, k3 = jax.random.split(key, 3)
+
+    # radii ∈ (0, 1]
+    r = jax.random.uniform(k1, shape=(n_per_class, 1))
+    # angles (each spiral winds 3/2 turns, i.e. up to 540°)
+    theta = r * 3.0 * jnp.pi  # (n/2, 1)
+
+    # class 0  …  θ
+    x0 = jnp.concatenate([r * jnp.cos(theta), r * jnp.sin(theta)], axis=1)
+    # class 1  …  θ + π  (rotated by 180°)
+    x1 = jnp.concatenate([r * jnp.cos(theta + jnp.pi),
+                          r * jnp.sin(theta + jnp.pi)], axis=1)
+
+    # add i.i.d. Gaussian noise
+    x0 += noise * jax.random.normal(k2, shape=x0.shape)
+    x1 += noise * jax.random.normal(k3, shape=x1.shape)
+
+    x = jnp.concatenate([x0, x1], axis=0).astype(jnp.float32)
+    y = jnp.concatenate([jnp.zeros(n_per_class), jnp.ones(n_per_class)]
+                        ).astype(jnp.float32)
+
+    # random permutation so minibatches are mixed
+    perm = jax.random.permutation(jax.random.fold_in(key, 42), n)
+    return x[perm], y[perm]
+
+def xor_dataset(n, key, noise=0.05):
+    zkey, noisekey = jax.random.split(key, 2)
+    z = jax.random.uniform(key=zkey, shape=(n,2))
+    x = (z > 0.5).astype(jnp.float32) #* 2 - 1
+    y = (x.sum(axis=1) == 1).astype(jnp.float32).squeeze()
+    x += noise * jax.random.normal(key=noisekey, shape=z.shape)
+    return x, y
+
 def banana_dataset(n, key, noise=0.05):
     x0key, x1key, noisekey = jax.random.split(key, 3)
     halfn = n // 2
@@ -91,8 +127,8 @@ def banana_dataset(n, key, noise=0.05):
     archn = int(halfn * 0.8)
     
     x01 = jax.random.uniform(x0key, shape=(archn, 1), minval=-1., maxval=1.)
-    x02 = jnp.cos(1.3*x01)
-    x02 -= .5
+    x02 = jnp.cos(1.5*x01)
+    x02 -= .7
     x0arch = jnp.concat([x01,x02], axis=1)
     x0arch += jax.random.normal(key=noisekey, shape=x0arch.shape) * noise
     
@@ -101,7 +137,7 @@ def banana_dataset(n, key, noise=0.05):
     noisekey = jax.random.fold_in(noisekey, 1)
     linen = halfn - archn
     x01 = jax.random.uniform(key=x0key, shape=(linen, 1), minval=0., maxval=1.)
-    x02 = 1. - x01 * 0.2
+    x02 = 1.5 - x01 * 0.2
     x0line = jnp.concat([x01,x02], axis=1)
     x0line += jax.random.normal(key=noisekey, shape=x0line.shape) * noise
     
@@ -110,9 +146,9 @@ def banana_dataset(n, key, noise=0.05):
     # generate the red arch
     archn = int(halfn * 0.6)
     
-    x11 = jax.random.uniform(x1key, shape=(archn, 1), minval=-.8, maxval=1.1)
-    x12 = jnp.cos(1.2*x11)
-    x12 -= .25
+    x11 = jax.random.uniform(x1key, shape=(archn, 1), minval=-1.8, maxval=1.1)
+    x12 = jnp.cos(1.6*x11)
+    x12 -= 0#.25
     x1arch = jnp.concat([x11,x12], axis=1)
     x1arch += jax.random.normal(key=noisekey, shape=x1arch.shape) * noise
     
@@ -120,8 +156,8 @@ def banana_dataset(n, key, noise=0.05):
     x1key = jax.random.fold_in(x1key, 1)
     nkey1,nkey2 = jax.random.split(noisekey, 2)
     blobn = halfn - archn
-    x11 = jax.random.uniform(key=x1key, shape=(blobn, 1), minval=-.5, maxval=.6)
-    x12 = jax.random.normal(nkey1, x11.shape) * noise * 1.5
+    x11 = jax.random.uniform(key=x1key, shape=(blobn, 1), minval=-.4, maxval=.5)
+    x12 = jax.random.normal(nkey1, x11.shape) * noise * 1.5 - 0.5
     x1blob = jnp.concat([x11,x12], axis=1)
     x1blob += jax.random.normal(key=nkey2, shape=x1blob.shape) * noise
     
@@ -133,6 +169,7 @@ def banana_dataset(n, key, noise=0.05):
     randperm = jax.random.permutation(jax.random.fold_in(key, 1337), n)
     
     return x[randperm], y[randperm]
+
 
 def data_ex5():
     data = jnp.load('data/data_exercise5.npz')
@@ -205,8 +242,11 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
     if dataset_name == 'xor':
         x, y = xor_dataset(n, key, noise)
         plot_data(x,y,dataset_name,plot_binary_classification_data)
-    if dataset_name == 'banana':
+    elif dataset_name == 'banana':
         x, y = banana_dataset(n, key, noise)
+        plot_data(x,y,dataset_name,plot_binary_classification_data)
+    elif dataset_name == 'spiral':
+        x, y = spiral_dataset(n, key, noise)
         plot_data(x,y,dataset_name,plot_binary_classification_data)
     elif dataset_name == 'sine':
         x, y = sine_wave_dataset(n, key, noise, split_in_middle=split_in_middle)

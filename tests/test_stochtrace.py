@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import pytest
 
 from src.stochtrace import stochastic_trace_estimator_mvp, stochastic_trace_estimator_dense, na_hutchpp_inv_mvp, hutchpp_dense, na_hutchpp_dense, hutchpp_mvp, na_hutchpp_mvp, hutchpp_inv_mvp
-from tests.fixtures import matrix_test_suite
+from fixtures import matrix_test_suite
 
 jax.config.update("jax_enable_x64", True)
 

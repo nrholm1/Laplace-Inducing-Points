@@ -1,5 +1,6 @@
 from functools import partial
 import functools
+import pdb
 import jax
 import jax.numpy as jnp
 import optax
@@ -50,7 +51,7 @@ def var_kl_fun(q, alpha):
 def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, full_set_size=None):
     q, unravel_fn = posterior_lla_dense(
         state,
-        prior_std=alpha,# todo correct alpha used here?
+        alpha=alpha,# todo correct alpha used here?
         x=z,
         model_type=model_type,
         full_set_size=full_set_size,
@@ -65,75 +66,72 @@ def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, f
 
 
 def alternative_objective_scalable(z, x, state, alpha, model_type, key, full_set_size=None):
-    prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
+    # prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
     
+    M = z.shape[0]
     D = count_model_params(state.params)
-    if model_type == 'regressor': # todo: handle this better!!
+    if model_type == 'regressor': # todo: handle this better?
         D -= 1 # ! subtract logvar parameter!
     
     # compute matrix free linear operator oracles
     print("Computing curvature")
-    S_full_vp = compute_curvature_approx(state, x, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
-    S_induc_vp = compute_curvature_approx(state, z, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size)
+    S_full_vp  = compute_curvature_approx(state, x, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
+    S_induc_vp = compute_curvature_approx(state, z, alpha=alpha, model_type=model_type, full_set_size=full_set_size) # todo something with the beta term?? Not correct, I believe.
     print("Finished computing curvature")
     
     # ! option 1: use conjugate gradient 
     # @jax.jit
     def S_induc_inv_vp(v):
-        # ! problems with backprop needing to store?
         x,info = jax.scipy.sparse.linalg.cg(A=S_induc_vp, b=v)
         return x
     
     # @jax.jit
     def composite_vp(v):
         # computes S_Z^{-1} @ S_full
-        return S_full_vp(S_induc_inv_vp(v))                      # ! for hutchinson
-        # return jax.vmap(S_full_vp, in_axes=1, out_axes=1)(     # ! for hutch++
-        #     jax.vmap(S_induc_inv_vp, in_axes=1, out_axes=1)(v)
-        # )
+        return S_full_vp(S_induc_inv_vp(v))
     
     # ! option 2: investigate woodbury matrix identity to avoid inverse maybe?
     # todo ...maybe?
     
-    # todo try to reuse randomly sampled vectors from stochtrace estimator for logdet estimator
+    # todo ENSURE REUSE CORRECT!
+    # ! reuse randomly sampled vectors from stochtrace estimator for logdet estimator
     
-    # todo try simple hutchinson estimator
-    # trace_term = stochastic_trace_estimator_mvp(composite_vp, D=D, seed=key, num_samples=20)
+    x0 = jnp.ones((D,), dtype=float)
+    nsamples = 16
+    # keys = jax.random.split(key, num=nsamples)
+    keys = jax.random.split(key, num=1)
+    sampler = matfree_stochtrace.sampler_normal(x0, num=nsamples)
+    
     def stoch_trace(Xfun):
         integrand = matfree_stochtrace.integrand_trace()
-        x0 = jnp.ones((D,))
-        sampler = matfree_stochtrace.sampler_rademacher(x0, num=16)
-        estimator = matfree_stochtrace.estimator(integrand, sampler)
-        estimator = functools.partial(estimator, Xfun)
-        keys = jax.random.split(key, num=1)
-        traces = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
-        return traces.mean()
+        estimator = matfree_stochtrace.estimator(integrand, sampler=sampler)
+        # estimator = functools.partial(estimator, Xfun)
+        # traces = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
+        # return traces.mean()
+        traces = estimator(Xfun, keys[0])
+        return traces
     trace_term = stoch_trace(composite_vp)
     
     # ! use stochastic Lanczos quadrature
     def stoch_lanczos_quadrature(Xfun):
-        # adapted directly from 
-        # https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        num_matvecs = 16
+        # adapted directly from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
+        num_matvecs = min(M, min(D,32))                                         # todo NAN values for large models?
         tridiag_sym = decomp.tridiag_sym(num_matvecs)
         problem = funm.integrand_funm_sym_logdet(tridiag_sym)
-        x0 = jnp.ones((D,), dtype=float)
-        sampler = matfree_stochtrace.sampler_normal(x0, num=16)
         estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
-        estimator = functools.partial(estimator, Xfun)
-        keys = jax.random.split(key, num=2)
-        logdets = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
-        return logdets.mean()
-    
+        # estimator = functools.partial(estimator, Xfun)
+        # logdets = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
+        # return logdets.mean()
+        logdets = estimator(Xfun, keys[0])
+        return logdets
     logdet_term = stoch_lanczos_quadrature(S_induc_vp)
-    
-    return trace_term + logdet_term # todo missing beta*D term?
+    return trace_term + logdet_term # ? missing beta*D term? (No, because it is implicitly included in the logdet term...)
 
 
 def alternative_objective(z, x, state, alpha, model_type, key, full_set_size=None):
-    prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    S_full, *_ = compute_curvature_approx_dense(state, x, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
-    S_induc_inv,    *_ = compute_curvature_approx_dense(state, z, prior_std=prior_std, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
+    # prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
+    S_full, *_ = compute_curvature_approx_dense(state, x, alpha=alpha, model_type=model_type, full_set_size=full_set_size, return_Hinv=True)
+    S_induc_inv,    *_ = compute_curvature_approx_dense(state, z, alpha=alpha, model_type=model_type, full_set_size=full_set_size, return_Hinv=False)
     
     """
     =========================================
@@ -220,7 +218,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         )
         # ! Enforce constraints on x (and w, if necessary)
         z = jnp.clip(z, lb, ub)
-
+        
         pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
     
     return z
