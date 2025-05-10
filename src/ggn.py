@@ -12,22 +12,43 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
     recal_term = jnp.sqrt( N/M ) # ! what is the correct recalibration?
     # recal_term = 1.
     
+    def sqrt_Hi_apply_T(f_out, vec):
+        if model_type == 'regressor':
+            c = jnp.exp(-state.params['logvar']['logvar'])
+            return jnp.sqrt(c) * vec
+        elif model_type == 'classifier':
+            # # Softmax cross-entropy Hessian = diag(p) - p p^T, PSD
+            # p = jax.nn.softmax(f_out)   # shape (K,)
+            # H_i = jnp.diag(p) - jnp.outer(p, p)  # shape (K,K)
+            # evals, evecs = jnp.linalg.eigh(H_i)  # evals >= 0
+            # sqrt_evals = jnp.sqrt(jnp.clip(evals, 0, jnp.inf))
+            # # transform to Q^T vec
+            # tmp = evecs.T @ vec
+            # # scale by sqrt_evals
+            # tmp = sqrt_evals * tmp
+            # # transform back
+            # res = evecs @ tmp
+            # # return res
+            # ! new
+            # -------- L · vec  --------
+            p = jax.nn.softmax(f_out)           # (K,)
+            s = jnp.sqrt(p)                     # (K,)
+            tmp    = s * vec                    # diag(s) · v
+            coeff  = jnp.dot(s, vec)            # sᵀ v
+            return tmp - coeff * p              # tmp - (sᵀv) · p
+    
     def sqrt_Hi_apply(f_out, vec):
         if model_type == 'regressor':
             c = jnp.exp(-state.params['logvar']['logvar'])
             return jnp.sqrt(c) * vec
         elif model_type == 'classifier':
-            # Softmax cross-entropy Hessian = diag(p) - p p^T, PSD
-            p = jax.nn.softmax(f_out)   # shape (K,)
-            H_i = jnp.diag(p) - jnp.outer(p, p)  # shape (K,K)
-            evals, evecs = jnp.linalg.eigh(H_i)  # evals >= 0
-            sqrt_evals = jnp.sqrt(jnp.clip(evals, 0, jnp.inf))
-            # transform to Q^T vec
-            tmp = evecs.T @ vec
-            # scale by sqrt_evals
-            tmp = sqrt_evals * tmp
-            # transform back
-            return evecs @ tmp
+            # -------- Lᵀ · vec --------
+            p = jax.nn.softmax(f_out)
+            s = jnp.sqrt(p)
+            tmp    = s * vec                    # diag(s) · v
+            coeff  = jnp.dot(p, vec)            # pᵀ v   (note the p!)
+            return tmp - coeff * s              # tmp - (pᵀv) · s
+            
     
     def model_fun(pflat, zi):
         p_unr = unravel_fn(pflat)
@@ -55,7 +76,7 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
         # evaluate model output at current params (for sqrt_Hi_apply)
         f_val = fzi(flat_params)
         # apply sqrt(H_i)
-        h_sqrt_ui = sqrt_Hi_apply(f_val, U_i)
+        h_sqrt_ui = sqrt_Hi_apply_T(f_val, U_i)
         # reverse-mode VJP => J_i^T( h_sqrt_ui )
         _, vjp_fn = jax.vjp(fzi, flat_params)
         return vjp_fn(h_sqrt_ui)[0]
