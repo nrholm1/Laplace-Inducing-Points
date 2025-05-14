@@ -8,7 +8,7 @@ import jax.tree_util
 from matfree import decomp
 from matfree.funm import funm_lanczos_sym, dense_funm_sym_eigh, funm_arnoldi
 
-from src.lla import posterior_lla_dense, compute_curvature_approx_dense
+from src.lla import posterior_lla_dense, compute_curvature_approx_dense, predict_lla_dense, predict_lla_scalable
 from src.sample import sample, inv_matsqrt_vp, sample_both, sample_dense, inv_matsqrt_dense
 from src.ggn import compute_ggn_dense, compute_W_vps
 from src.utils import flatten_nn_params, is_pd
@@ -134,7 +134,7 @@ def test_nullproj(sine_data, toyregressor_state):
     
     assert full_out.shape == (D,), "Something is incorrect with the shapes"
 
-    assert jnp.all(jnp.isclose(Wfun(WTfun(full_out)), jnp.zeros_like(full_out), atol=1.5e-1)), "full_out should be in kernel, i.e. GGN maps it to 0."
+    assert jnp.all(jnp.isclose(Wfun(WTfun(full_out)), jnp.zeros_like(full_out), atol=1.5e-3)), "full_out should be in kernel, i.e. GGN maps it to 0."
 
 
 
@@ -531,17 +531,22 @@ def test_sample_fun_classifier(classification_2d_data, classifier_state):
     X = X.astype(jnp.float64)
     y = y.astype(jnp.float64)
     
+    Xnew = jax.random.normal(key=jax.random.PRNGKey(1), shape=(3, *X[0].shape))
+    
     state = classifier_state
     state = state.replace(
         params=jax.tree_util.tree_map(lambda param: param.astype(jnp.float64), state.params)
     )
-    flat_params, _ = flatten_nn_params(state.params)
+    flat_params,unravel_fn = flatten_nn_params(state.params['params'])
     D = flat_params.shape[0]
     key = jax.random.PRNGKey(1392)
     alpha = 0.5
     
     post_dist = posterior_lla_dense(state, X, model_type="classifier", alpha=alpha)
     samples = sample(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=100)
+    
+    fdist = predict_lla_dense(state, Xnew, X, model_type="classifier", alpha=alpha)
+    fmu, fcov = predict_lla_scalable(state, Xnew, X, model_type="classifier", alpha=alpha)
     
     assert False
     

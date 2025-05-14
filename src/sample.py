@@ -11,6 +11,7 @@ from src.utils import flatten_nn_params
 
     
 def inv_matsqrt_dense(state, Z, D, alpha, model_type, full_set_size=None):
+    """Note: Only for debugging use."""
     # materialize W and WT
     flat_params, _ = flatten_nn_params(state.params)
     D = flat_params.shape[0]
@@ -24,7 +25,10 @@ def inv_matsqrt_dense(state, Z, D, alpha, model_type, full_set_size=None):
     WT = W.T                                           # (d, D)
     
     composite = WT@W
-    inv_composite = jnp.linalg.pinv(composite)
+    inv_composite = jnp.linalg.solve(
+        composite,
+        jnp.eye(composite.shape[0])
+    )
     
     nullproj = I_D - W@inv_composite@WT
     term1 = 1/jnp.sqrt(alpha) * nullproj
@@ -53,8 +57,6 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
     
     From thm (1.2) in https://nhigham.com/wp-content/uploads/2023/02/fhl23.pdf
     """
-    # Wfun, WTfun = compute_W_vps(state, Z, model_type, full_set_size=full_set_size)
-    # Wfun_b, WTfun_b = compute_W_vps(state, Z, model_type, full_set_size=full_set_size, blockwise=True) # todo use for alternating projection
     # ! explicitly set full_set_size to None! Analytically derived beta to only be used inside the matfree invsqrt function
     Wfun, WTfun = compute_W_vps(state, Z, model_type, full_set_size=None)
     Wfun_b, WTfun_b = compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=True) # todo use for alternating projection
@@ -80,7 +82,7 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
         return v - Wfun_b(i, composite_inv_vp_b(i, WTfun_b(i,v)))
     
     # ? version that shuffles the minibatch order
-    def nullproj_approx_shuffled(v, key, steps=5):
+    def nullproj_approx_shuffled(v, key, steps):
         def outer_body(step, state):
             v, key = state
             # generate a new permutation for each outer iteration
@@ -108,30 +110,14 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
     invmatsqrt = funm_lanczos_sym(invsqrt_fun, tridiag)
 
     def invmatsqrt_term(V):
-        """
-        v has shape (p,).  We do:
-        1) V = WTfun(v) -> shape (M,K)
-        2) flatten to shape (M*K,)
-        3) call 'invmatsqrt' in that flattened space
-        4) reshape back to (M,K).
-        """
-        Vflat, unravel_fn = jax.flatten_util.ravel_pytree(V) # shape (M*K,)
-
+        """Note: matfree expects 1D input, so we wrap the operation in flatten/unflatten."""
+        Vflat, unravel_fn = jax.flatten_util.ravel_pytree(V)
         def inner_fun_flat(Uflat):
-            # 1) unflatten U to shape (M,K)
             Umat = unravel_fn(Uflat)
-            # 2) apply operator in matrix form
-            #    This is alpha*U + beta*(WTfun(Wfun(U))),
-            WTUmat = composite_vp(Umat)  # shape (M,K)
-            WTUmat_flat,_ = jax.flatten_util.ravel_pytree(WTUmat)  # shape (M*K,)
-            # 3) also flatten the "alpha * Umat" part:
+            WTUmat = composite_vp(Umat)
+            WTUmat_flat,_ = jax.flatten_util.ravel_pytree(WTUmat)
             return alpha * Uflat + beta * WTUmat_flat
-            # return alpha * Uflat + WTUmat_flat
-
-        # We do the lanczos call in the  1D space of length M*K
-        result_flat = invmatsqrt(inner_fun_flat, Vflat)  # result is shape (M*K,)
-
-        # Reshape the result back to (M, K)
+        result_flat = invmatsqrt(inner_fun_flat, Vflat)
         result = unravel_fn(result_flat)
         return result
     
@@ -144,7 +130,6 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
             )
         )
     
-    # todo @jax.jit
     @jax.jit
     def vp(v):
         return outer_fun(v) + nullproj_term(v)
@@ -152,13 +137,13 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
     return vp
 
 
-
-def sample(state, Z, D, alpha, key, model_type, num_samples=1, full_set_size=None, num_proj_steps=1):
+def sample(state, Z, D, alpha, key, model_type, num_samples=1, full_set_size=None, num_proj_steps=10):
     sample_key, altproj_key = jax.random.split(key, 2)
+    altproj_key = None # TODO handle! # currently the alternating projections just give NaN values
     Eps = jax.random.normal(sample_key, shape=(num_samples, D))
     inv_matsqrt_fun = inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=full_set_size, key=altproj_key, num_proj_steps=num_proj_steps)
-    flat_params, unravel_fn = flatten_nn_params(state.params['params']) # todo could potentially make it s.t. we reuse MAP by passing flat params to inv_sqrtm
-    samples = jax.vmap(inv_matsqrt_fun, in_axes=(0,))(Eps) + flat_params
+    # flat_params, unravel_fn = flatten_nn_params(state.params['params']) # todo could potentially make it s.t. we reuse MAP by passing flat params to inv_sqrtm
+    samples = jax.vmap(inv_matsqrt_fun, in_axes=(0,))(Eps) # + flat_params
     return samples
 
 

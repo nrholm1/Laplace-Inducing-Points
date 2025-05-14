@@ -38,7 +38,7 @@ datamain = src/toydata.py
 
 DEVICE = cpu
 
-DATASET = spiral
+DATASET = banana
 MODEL = toyclassifier
 
 
@@ -46,7 +46,8 @@ run:
 	$(PYTHON_INTERPRETER) $(toymain) $(mode) \
 		--dataset $(DATASET) \
 		--model_config config/$(MODEL)_$(DATASET).yml \
-		--optimization_config config/optimization_$(MODEL)_$(DATASET).yml
+		--optimization_config config/optimization_$(MODEL)_$(DATASET).yml \
+		$(EXTRA_ARGS)
 
 debug_run:
 	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(toymain) $(mode) \
@@ -61,10 +62,18 @@ train_map:
 	$(MAKE) run mode=train_map
 train_inducing:
 	$(MAKE) run mode=train_inducing
+strain_inducing:
+	$(MAKE) run mode=train_inducing EXTRA_ARGS=--scalable
 full_pipeline:
 	$(MAKE) run mode=full_pipeline
+sfull_pipeline:
+	$(MAKE) run mode=full_pipeline EXTRA_ARGS=--scalable
 visualize:
 	$(MAKE) run mode=visualize
+visualize_full:
+	$(MAKE) run mode=visualize EXTRA_ARGS=--full
+svisualize:
+	$(MAKE) run mode=visualize EXTRA_ARGS=--scalable
 
 # debug targets
 debug_map:

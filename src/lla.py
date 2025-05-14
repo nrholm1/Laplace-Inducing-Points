@@ -5,6 +5,7 @@ import tensorflow_probability.substrates.jax as tfp
 
 from src.ggn import compute_ggn_dense, compute_ggn_vp
 from src.utils import flatten_nn_params
+from src.sample import sample
 
 
 def compute_curvature_approx(map_state, Z, model_type, alpha, full_set_size=None):
@@ -34,14 +35,13 @@ def compute_curvature_approx_dense(map_state, x, model_type, alpha, full_set_siz
 
 
 def posterior_lla_dense(map_state, x, model_type, alpha, full_set_size=None, return_unravel_fn=False):
-    S_approx_inv, flat_params_map, unravel_fn = compute_curvature_approx_dense(
+    S_inv, flat_params_map, unravel_fn = compute_curvature_approx_dense(
         map_state, x, model_type=model_type, alpha=alpha, full_set_size=full_set_size
     )
-    S_approx = jnp.linalg.inv(S_approx_inv)
-    # S_approx = S_approx_inv
+    S = jnp.linalg.solve(S_inv, jnp.eye(S_inv.shape[0])) # invert
     posterior_dist = tfp.distributions.MultivariateNormalFullCovariance(
         loc=flat_params_map.astype(jnp.float64),
-        covariance_matrix=S_approx
+        covariance_matrix=S
     )
     if return_unravel_fn:
         return posterior_dist, unravel_fn
@@ -49,11 +49,11 @@ def posterior_lla_dense(map_state, x, model_type, alpha, full_set_size=None, ret
 
 
 def predict_lla_dense(map_state, Xnew, Z, model_type, alpha, full_set_size=None):
-    S_approx_inv, flat_params_map, unravel_fn = compute_curvature_approx_dense(
+    S_inv, flat_params_map, unravel_fn = compute_curvature_approx_dense(
         map_state, Z, model_type=model_type, alpha=alpha, full_set_size=full_set_size
     )
-    S_approx = jnp.linalg.inv(S_approx_inv)
-    # S_approx = S_approx_inv
+    S = jnp.linalg.solve(S_inv, jnp.eye(S_inv.shape[0])) # invert
+    
     @jax.jit
     def flat_apply_fn(flat_p, inputs):
         p = unravel_fn(flat_p)
@@ -72,12 +72,9 @@ def predict_lla_dense(map_state, Xnew, Z, model_type, alpha, full_set_size=None)
     
     @jax.jit
     def per_datum_cov(Ji):
-        return Ji @ S_approx @ Ji.T
+        return Ji @ S @ Ji.T
     f_cov = jax.vmap(per_datum_cov)(Jnew)
     if model_type == "regressor": f_cov = jnp.diag(f_cov)
-    
-    # pdb.set_trace()
-    # assert jnp.all(jnp.linalg.eigvals(f_cov) > 0), "Covariance matrix not PD!" # ! expensive?
     
     return tfp.distributions.MultivariateNormalFullCovariance(
         loc=f_mean,
@@ -86,15 +83,11 @@ def predict_lla_dense(map_state, Xnew, Z, model_type, alpha, full_set_size=None)
     
 
 
-# TODO I think we might eventually for large GGNs use MC sampling
-def predict_lla_fun(map_state, Xnew, Z, model_type, alpha, full_set_size=None):
-    # TODO big todo: how do we do inv S_vp??? CG?
-    S_vp_inv = compute_curvature_approx(map_state, Z, model_type, alpha, full_set_size)
-    def S_vp(v):
-        x,info = jax.scipy.sparse.linalg.cg(A=S_vp_inv, b=v)
-        return x
-    
+def predict_lla_scalable(map_state, Xnew, Z, model_type, alpha, full_set_size=None, num_samples=1):
     flat_params, unravel_fn = flatten_nn_params(map_state.params['params'])
+    D = flat_params.shape[0]
+    key = jax.random.PRNGKey(123) # todo handle
+    w_samples = sample(map_state, Z, D, alpha=alpha, key=key, model_type=model_type, num_samples=num_samples, full_set_size=full_set_size)
     
     @jax.jit
     def model_fun(flat_p, x):
@@ -104,23 +97,13 @@ def predict_lla_fun(map_state, Xnew, Z, model_type, alpha, full_set_size=None):
         else:
             mu_batched = map_state.apply_fn(p, x)
         return mu_batched
-    
-    f_mean = model_fun(flat_params, Xnew)
-    
-    N = Xnew.shape[0]
-    out_dim = f_mean.shape[1] if f_mean.ndim > 1 else 1  # for multi-output
-    
-    def f_cov_vp(U):
-        U = U.reshape(N, out_dim)
-        def fz(p):
-            return model_fun(p, Xnew)
-        _, vjp_fn = jax.vjp(fz, flat_params)
-        v_param = vjp_fn(U)[0]
-        w_param = S_vp(v_param)
-        _, jvp_out = jax.jvp(fz, (flat_params,), (w_param,))
-        return jvp_out
-    
-    return f_mean, f_cov_vp
+    fmu = model_fun(flat_params, Xnew)
+    def fz(p):
+        return model_fun(p, Xnew)
+    dy_fun = lambda w_sample: jax.jvp(fz, (flat_params,), (w_sample,))[1]
+    dys    = jax.vmap(dy_fun)(w_samples)
+    # pdb.set_trace()
+    return fmu[None] + dys
 
 
 
@@ -148,36 +131,36 @@ def materialize_covariance(f_cov_vp, N, out_dim, mode='diag'):
         If mode='diag', shape = (N, out_dim), the diagonal entries (variances).
         If mode='full', shape = (N*out_dim, N*out_dim), the full covariance matrix.
     """
-    M = N * out_dim
+    K = N * out_dim
 
     if mode == 'diag':
         # We only want the diagonal => e_i^T (J Σ J^T) e_i for i in [0..M-1].
-        diag_init = jnp.zeros(M, dtype=jnp.float64)
+        diag_init = jnp.zeros(K, dtype=jnp.float64)
 
         def body_fun(i, diag):
-            # 1) Create the i-th standard basis vector of length M
-            e_i = jnp.zeros(M, dtype=jnp.float64).at[i].set(1.0)
+            # 1) Create the i-th standard basis vector of length K
+            e_i = jnp.zeros(K, dtype=jnp.float64).at[i].set(1.0)
             # 2) Apply the operator -> shape (N, out_dim)
-            Ae_i = f_cov_vp(e_i).reshape(M)
+            Ae_i = f_cov_vp(e_i).reshape(K)
             # 3) The diagonal element is Ae_i[i]
             diag = diag.at[i].set(Ae_i[i])
             return diag
 
-        diag_cov = jax.lax.fori_loop(0, M, body_fun, diag_init)
+        diag_cov = jax.lax.fori_loop(0, K, body_fun, diag_init)
         return diag_cov.reshape((N, out_dim))
 
     elif mode == 'full':
-        # We want the entire MxM matrix: each column is (J Σ J^T) e_i
-        cov_init = jnp.zeros((M, M), dtype=jnp.float64)
+        # We want the entire KxK matrix: each column is (J Σ J^T) e_i
+        cov_init = jnp.zeros((K, K), dtype=jnp.float64)
 
         def body_fun(i, cov):
-            e_i = jnp.zeros(M, dtype=jnp.float64).at[i].set(1.0)
-            col_i = f_cov_vp(e_i).reshape(M)   # shape (M,)
+            e_i = jnp.zeros(K, dtype=jnp.float64).at[i].set(1.0)
+            col_i = f_cov_vp(e_i).reshape(K)   # shape (K,)
             # Place col_i in the i-th column
             cov = cov.at[:, i].set(col_i)
             return cov
 
-        f_cov = jax.lax.fori_loop(0, M, body_fun, cov_init)
+        f_cov = jax.lax.fori_loop(0, K, body_fun, cov_init)
         return f_cov
 
     else:

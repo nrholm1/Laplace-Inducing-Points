@@ -76,19 +76,26 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     beta = N / M
     alpha_inv = 1.0 / alpha
     beta_inv = 1.0 / beta
+    
     D = count_model_params(state.params)
-    if model_type == 'regressor': # todo: handle this better?
+    if model_type == 'regressor':
         D -= 1 # ! subtract logvar parameter!
     
     # compute matrix free linear operator oracles
-    S_vp  = compute_curvature_approx(state, X, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
-    S_z_vp = compute_curvature_approx(state, Z, alpha=alpha, model_type=model_type, full_set_size=None) # todo something with the beta term?? Not correct, I believe.
-    W, WT = compute_W_vps(state, Z, model_type=model_type, full_set_size=None)
+    S_vp  = compute_curvature_approx(
+        state, X, alpha=alpha, model_type=model_type, 
+        full_set_size=N)
+    S_z_vp = compute_curvature_approx(
+        state, Z, alpha=alpha, model_type=model_type, 
+        full_set_size=None)
+    W, WT = compute_W_vps(
+        state, Z, model_type=model_type, 
+        full_set_size=None)
     
-    dummy = WT(jnp.zeros(D))
-    inner_shape = dummy.shape # todo correct?
-    d = dummy.size # todo correct?
-    I_d = jnp.eye(d, dtype=float)
+    dummy       = WT(jnp.zeros(D))
+    inner_shape = dummy.shape
+    d           = dummy.size
+    I_d         = jnp.eye(d, dtype=float)
     
     # ! option 1: use conjugate gradient 
     def S_z_inv_vp_direct(v):
@@ -106,94 +113,80 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         return alpha_inv*v - alpha_inv**2*W(x)
     
     def S_z_inv_vp_woodbury_dense(v):
+        # todo: jit this or assure that WTW is not recomputed each call.
         WTW = jax.vmap(lambda e: 
                 WT(W(e.reshape(inner_shape)))
             )(I_d).reshape(d,d)
-        # K = jnp.linalg.inv(I_d + alpha_inv*WTW)
-        # WTW += I_d*1e-10 # jitter
-        K   = jax.scipy.linalg.solve(
-            I_d + alpha_inv * WTW,               # SPD
-            I_d,                               # RHS
-        )
         u = WT(v).reshape(d)
-        x = K @ u
+        # K   = jax.scipy.linalg.solve(
+        x   = jax.scipy.linalg.solve(
+            beta_inv*I_d + alpha_inv * WTW,               # SPD
+            u,                                 # RHS
+            # I_d,                                 # RHS
+        )
+        # x = K @ u
         return alpha_inv*v - alpha_inv**2*W(x.reshape(inner_shape))
-        
     
     def composite_vp(v):
-        # computes S_Z^{-1} @ S_full
         return S_vp(S_z_inv_vp_woodbury_dense(v))
-        # return S_vp(S_z_inv_vp_direct(v))
     
-    
-    # todo ENSURE REUSE CORRECT!
-    # ! reuse randomly sampled vectors from stochtrace estimator for logdet estimator
-    
+    # ! use same random vectors for StochTrace and SLQ
     x0 = jnp.ones((D,), dtype=float)
-    nsamples = 16
-    # keys = jax.random.split(key, num=nsamples)
-    keys = jax.random.split(key, num=1)
-    sampler = matfree_stochtrace.sampler_normal(x0, num=nsamples)
+    nsamples_st = 256
+    nsamples_slq = 2
+    sampler = matfree_stochtrace.sampler_rademacher(x0, num=nsamples_st)
+    probes = sampler(key)
+    st_sampler =  lambda _: probes
+    slq_sampler = lambda _: probes[:nsamples_slq]
     
     def stoch_trace(Xfun):
         integrand = matfree_stochtrace.integrand_trace()
-        estimator = matfree_stochtrace.estimator(integrand, sampler=sampler)
-        # estimator = functools.partial(estimator, Xfun)
-        # traces = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
-        # return traces.mean()
-        traces = estimator(Xfun, keys[0])
+        estimator = matfree_stochtrace.estimator(integrand, sampler=st_sampler)
+        traces = estimator(Xfun, key)
         return traces
-    trace_term = stoch_trace(composite_vp)
+    trace_term = stoch_trace(composite_vp) 
     
     # ! use stochastic Lanczos quadrature
-    def stoch_lanczos_quadrature(Xfun):
+    def slq_logdet(Xfun):
         # adapted directly from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        num_matvecs = min(M, D, 32)                                         # todo NAN values for large models?
+        num_matvecs = min(int(M*0.8), D)
         tridiag_sym = decomp.tridiag_sym(num_matvecs)
         problem = funm.integrand_funm_sym_logdet(tridiag_sym)
-        estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
-        # estimator = functools.partial(estimator, Xfun)
-        # logdets = jax.lax.map(jax.checkpoint(estimator), keys) # ! note this forces recomputation => more comp. expensive!!
-        # return logdets.mean()
-        logdets = estimator(Xfun, keys[0]) ## todo WHY NAN values???
+        estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
+        logdets = estimator(Xfun, key)
         return logdets
-    logdet_term = stoch_lanczos_quadrature(S_z_vp)
+    logdet_term = slq_logdet(S_z_vp)
     
-    # pdb.set_trace()
-    
-    return beta_inv*trace_term + D*jnp.log(beta) + logdet_term # ? missing beta*D term? (No, because it is implicitly included in the logdet term...)
+    return trace_term + logdet_term
 
 
-def alternative_objective(Z, X, state, alpha, model_type, key, full_set_size=None):
-    # prior_std = alpha**(-0.5) # σ = 1/sqrt(⍺) = ⍺^(-1/2)
-    S, *_ = compute_curvature_approx_dense(state, X, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
-    S_z,    *_ = compute_curvature_approx_dense(state, Z, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
-    S_z_inv = jnp.linalg.inv(S_z)
-    
+def alternative_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
     """
     =========================================
     Compute KL[ q(theta|Z) || p(theta|data) ]
     =========================================
     """
+    S, *_ = compute_curvature_approx_dense(state, X, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
+    S_z,    *_ = compute_curvature_approx_dense(state, Z, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
+    S_z_inv = jnp.linalg.inv(S_z)
+    
     trace_term = jnp.linalg.trace(S @ S_z_inv)
     
-    # log_det_term = jnp.log( 1 / (jnp.linalg.det(S_full_inv) * jnp.linalg.det(S_induc)) ) # ! problematic, super ill-conditioned?
-    sign_full, S_logdet = jnp.linalg.slogdet(S)
-    sign_induc, S_z_inv_logdet = jnp.linalg.slogdet(S_z_inv)
-    # todo use signs to signal if determinants are nonpositive - does not play well with JIT
+    _, S_logdet = 0., 0. # jnp.linalg.slogdet(S)
+    _, S_z_inv_logdet = jnp.linalg.slogdet(S_z_inv)
     logdet_term = - S_logdet - S_z_inv_logdet
     
-    D = 0 # todo const - does it matter for optimization?
-    return 0.5 * (trace_term - D + logdet_term)
+    return trace_term + logdet_term
 
 # variational_grad = jax.value_and_grad(naive_objective)
-# variational_grad = jax.value_and_grad(alternative_objective)
-variational_grad = jax.value_and_grad(alternative_objective_scalable)
+variational_grad_dense = jax.value_and_grad(alternative_objective_dense)
+variational_grad_scalable = jax.value_and_grad(alternative_objective_scalable)
 
 
-@partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size'))
-def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, full_set_size=None):
-    loss, grads = variational_grad(
+@partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size', 'scalable'))
+def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, full_set_size=None, scalable=True):
+    grad_fun = variational_grad_scalable if scalable else variational_grad_dense
+    loss, grads = grad_fun(
         Z, 
         X, 
         map_model_state, 
@@ -203,13 +196,13 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
         model_type=model_type, 
         full_set_size=full_set_size
     )
-    # assert jnp.all(~jnp.isnan(grads)), "NaN values 😭" # ! comment out for JIT
-    updates, new_opt_state = zoptimizer.update(grads, opt_state)
+    updates, new_opt_state = zoptimizer.update(grads, opt_state)  # ? ADAM, SGD, etc.
+    # updates, new_opt_state = zoptimizer.update(grads, opt_state, Z) # ? ADAMW
     new_params = optax.apply_updates(Z, updates)
     return new_params, new_opt_state, loss
 
 
-def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, plot_full_dataset_fn_debug=None):
+def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, scalable, plot_full_dataset_fn_debug=None):
     z = zinit
     opt_state = zoptimizer.init(z)
     _iter = iter(dataloader)
@@ -241,21 +234,29 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
     for step in pbar:
         dataset_sample = get_next_sample(num_batches=1)
         x_sample,y_sample = dataset_sample
-        rng, rng_step = jax.random.split(rng)
+        
+        # ! Common Random Numbers - does it work???
+        if step % 4 == 0:
+            rng = jax.random.fold_in(rng, step) # todo TEST holding probes constant
+        
         z, opt_state, loss = optimize_step(
             z, 
             x_sample, 
             map_model_state=map_model_state, 
             alpha=alpha, 
             opt_state=opt_state, 
-            rng=rng_step,
+            rng=rng,
             model_type=model_type,
             zoptimizer=zoptimizer, 
             num_mc_samples=num_mc_samples, 
-            full_set_size=full_set_size
+            full_set_size=full_set_size,
+            scalable=scalable,
         )
         # ! Enforce constraints on x (and w, if necessary)
-        z = jnp.clip(z, lb, ub)
+        z = jnp.clip(z, 
+                     lb*(1 - 0.2*jnp.sign(lb)),
+                     ub*(1 + 0.2*jnp.sign(ub))
+            )
         
         pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
         
@@ -268,13 +269,14 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             traj = np.stack(trajectory)    # shape (n_points, 2)
             ax.clear()
             ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
-            plot_full_dataset_fn_debug()
+            # plot_full_dataset_fn_debug()
             ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
             ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
             ax.set_xlabel('z[0]')
             ax.set_ylabel('z[1]')
             ax.set_title(f'Latent Trajectory after {step} steps')
             scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+            plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
             
             # force a draw
             fig.canvas.draw()

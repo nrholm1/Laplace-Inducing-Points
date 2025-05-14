@@ -4,7 +4,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from src.lla import compute_curvature_approx_dense, posterior_lla_dense, predict_lla_dense, predict_lla_fun, materialize_covariance
+from src.lla import compute_curvature_approx_dense, posterior_lla_dense, predict_lla_dense, predict_lla_scalable, materialize_covariance
 from src.utils import flatten_nn_params
 from fixtures import small_model_state, regression_1d_data, toyregressor_state, sine_data, classifier_state, classification_2d_data
 
@@ -73,7 +73,7 @@ def test_predict_lla_jvp(toyregressor_state, sine_data):
     f_mean_dense = pred_dist.mean()
     f_cov_dense = pred_dist.covariance()
     
-    f_mean, f_cov_vp = predict_lla_fun(state, xnew, X, model_type="regressor", alpha=1.0)
+    f_mean, f_cov_vp = predict_lla_scalable(state, xnew, X, model_type="regressor", alpha=1.0)
     I = jnp.eye(xnew.shape[0])
     
     f_cov_mf = jnp.diag( materialize_covariance(f_cov_vp, *f_mean.shape, mode='diag').squeeze() )
@@ -101,7 +101,7 @@ def test_predict_lla_jvp_classifier(classifier_state, classification_2d_data):
     
     # post_dist = posterior_lla_dense(state, X, prior_precision=0.5, model_type="classifier")
     post_pred_dist = predict_lla_dense(state, xnew, X, alpha=0.5, model_type="classifier")
-    f_mean, f_cov_vp = predict_lla_fun(state, xnew, X, model_type="classifier", alpha=0.5)
+    f_mean, f_cov_vp = predict_lla_scalable(state, xnew, X, model_type="classifier", alpha=0.5)
     
     diag = materialize_covariance(f_cov_vp, *f_mean.shape, mode='diag')
     full = materialize_covariance(f_cov_vp, *f_mean.shape, mode='full')

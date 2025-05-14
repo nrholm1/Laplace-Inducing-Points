@@ -112,7 +112,7 @@ def train_map(
     *,
     model_type          : str,                         # "regressor" | "classifier"
     num_epochs          : int   = 1500,
-    prior_precision     : float = 0.05,               # α (larger ⇒ stronger decay)
+    alpha     : float = 0.05,               # α (larger ⇒ stronger decay)
 ):
     """
     MAP training loop using an already-constructed `TrainState`.
@@ -132,7 +132,7 @@ def train_map(
     for epoch in pbar:
         # ── optimise one epoch ────────────────────────────────────────────
         for batch in train_loader:
-            state, train_loss = _map_step(state, batch, posterior_fn, prior_precision)
+            state, train_loss = _map_step(state, batch, posterior_fn, alpha)
 
         # ── evaluate every 10 epochs ──────────────────────────────────────
         if epoch % 10 == 0:
