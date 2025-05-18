@@ -88,6 +88,7 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
             # generate a new permutation for each outer iteration
             key, subkey = jax.random.split(key)
             perm = jax.random.permutation(subkey, N)
+            # todo make batched, dense.
             def inner_body(i, v):
                 b = perm[i]
                 return nullproj_fun_b(b, v)
@@ -106,8 +107,9 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
     beta = N / M                    # todo remember to use beta!
     
     invsqrt_fun = dense_funm_sym_eigh(lambda x: 1.0/jnp.sqrt(x))
-    tridiag = decomp.tridiag_sym(min(D,M))  # todo maybe set num_matvecs according to sample size - i.e. number of inducing points
-    invmatsqrt = funm_lanczos_sym(invsqrt_fun, tridiag)
+    decomp_method = decomp.tridiag_sym(min(D,M))  # todo maybe set num_matvecs according to sample size - i.e. number of inducing points
+    # decomp_method = decomp.bidiag(min(D,M))  # todo maybe set num_matvecs according to sample size - i.e. number of inducing points
+    invmatsqrt = funm_lanczos_sym(invsqrt_fun, decomp_method)
 
     def invmatsqrt_term(V):
         """Note: matfree expects 1D input, so we wrap the operation in flatten/unflatten."""

@@ -48,7 +48,6 @@ def var_kl_fun(q, alpha):
     norm_term = alpha * jnp.linalg.norm(mu) ** 2
     logdetp_term = jnp.log(D / alpha + 1e-9)  # log(det( I * alpha^(-1) ))
     logdetq_term = jnp.log(jnp.linalg.det(cov) + 1e-9)  # todo fix: hack = add epsilon term
-    
     kl_term = 0.5 * (tr_term - D + norm_term + logdetp_term - logdetq_term)
     return kl_term
 
@@ -60,13 +59,10 @@ def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, f
         x=z,
         model_type=model_type,
         full_set_size=full_set_size,
-        return_unravel_fn=True
-    )
-
+        return_unravel_fn=True)
     loglik_term = var_loglik_fun(q, dataset, state.apply_fn, unravel_fn, rng, num_mc_samples=num_mc_samples)
     kl_term = var_kl_fun(q, alpha)
     reg_term = 0 # ! reg_coeff * (jnp.sum(jnp.square(x)) + jnp.sum(jnp.square(w)))
-
     return - (loglik_term - kl_term) + reg_term
 
 
@@ -107,24 +103,17 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         def inner(u): 
             return u + alpha_inv*WT(W(u))
         u = WT(v)
-        x,info = jax.scipy.sparse.linalg.cg(A=inner, 
-                                            b=u,
-                                            )
+        x,info = jax.scipy.sparse.linalg.cg(A=inner, b=u)
         return alpha_inv*v - alpha_inv**2*W(x)
     
     def S_z_inv_vp_woodbury_dense(v):
-        # todo: jit this or assure that WTW is not recomputed each call.
         WTW = jax.vmap(lambda e: 
                 WT(W(e.reshape(inner_shape)))
             )(I_d).reshape(d,d)
         u = WT(v).reshape(d)
-        # K   = jax.scipy.linalg.solve(
         x   = jax.scipy.linalg.solve(
-            beta_inv*I_d + alpha_inv * WTW,               # SPD
-            u,                                 # RHS
-            # I_d,                                 # RHS
-        )
-        # x = K @ u
+            beta_inv*I_d + alpha_inv*WTW,
+            u)
         return alpha_inv*v - alpha_inv**2*W(x.reshape(inner_shape))
     
     def composite_vp(v):
@@ -178,7 +167,7 @@ def alternative_objective_dense(Z, X, state, alpha, model_type, key, full_set_si
     
     return trace_term + logdet_term
 
-# variational_grad = jax.value_and_grad(naive_objective)
+
 variational_grad_dense = jax.value_and_grad(alternative_objective_dense)
 variational_grad_scalable = jax.value_and_grad(alternative_objective_scalable)
 

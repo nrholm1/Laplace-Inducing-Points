@@ -14,8 +14,8 @@ from seaborn import set_style
 set_style('darkgrid')
 
 from src.toymodels import SimpleRegressor, SimpleClassifier
-from src.toydata import JAXDataset, get_dataloaders, plot_binary_classification_data
-from src.nplot import plot_bc_boundary_contour, plot_bc_heatmap, plot_heatmap_averaged, scatterp, linep, plot_cinterval, plot_inducing_points_1D
+from src.toydata import JAXDataset, get_dataloaders
+from src.nplot import make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
 
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
@@ -48,7 +48,7 @@ def plot_map(map_model_state, traindata, testdata, alpha, model_type="", dataset
         from src.toydata import plot_binary_classification_data
         plot_binary_classification_data(xtrain, ytrain)
         tmin, tmax = xtrain.min() - 1.5, xtrain.max() + 1.5
-        plot_bc_heatmap(fig, ax, map_model_state, tmin, tmax)
+        plot_map_2D_classification(fig, ax, map_model_state, tmin, tmax)
         # plot_bc_boundary_contour( map_model_state, tmin, tmax, color='#3f3', alpha=1., label='Decision boundary')
         
     plt.legend(loc='lower right', framealpha=1.0)
@@ -60,27 +60,31 @@ def plot_map(map_model_state, traindata, testdata, alpha, model_type="", dataset
 
 
 def plot_inducing_dense(model_type, map_model_state, 
-                  xtrain, ytrain, xtest, ytest, zinduc, 
+                  Xtrain, 
+                  ytrain, 
+                  Xtest, 
+                  ytest, 
+                  zinduc, 
                   alpha, rng_inducing,
                   model, optimizer_map, 
                   m_induc, epochs_induc, dataset_name,
                   full_lla=False):
     fig, ax = plt.subplots(1, 2, figsize=(10, 4))
     if full_lla:
-        fig.suptitle(f"Full LLA / {xtrain.shape[0]} data points")
+        fig.suptitle(f"Full LLA / {Xtrain.shape[0]} data points")
     else:
         fig.suptitle(f"IP LLA / {m_induc} inducing points, {epochs_induc} steps")
     
 
     if model_type == "regressor":  # 1D regression case
         # Create a linear grid for predictions
-        xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
+        xlin = jnp.linspace(Xtrain.min(), Xtrain.max(), 100, dtype=jnp.float64)[:, None]
         postpreddist_full = predict_lla_dense(
-            map_model_state, xlin, xtrain, model_type=model_type, alpha=alpha
+            map_model_state, xlin, Xtrain, model_type=model_type, alpha=alpha
         )
         postpreddist_optimized = predict_lla_dense(
-            map_model_state, xlin, zinduc, model_type=model_type, alpha=alpha,
-            full_set_size=xtrain.shape[0]
+            map_model_state, xlin, Z, model_type=model_type, alpha=alpha,
+            full_set_size=Xtrain.shape[0]
         )
         
         plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
@@ -89,213 +93,17 @@ def plot_inducing_dense(model_type, map_model_state,
                        text="ind. optimized", color='limegreen', zorder=4)
         
         # Plot training and test data
-        scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
-        scatterp(xtrain, ytrain, zorder=1, label='Train data')
-        plot_inducing_points_1D(ax, zinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
+        scatterp(Xtest, ytest, color="yellow", zorder=2, label='Test data')
+        scatterp(Xtrain, ytrain, zorder=1, label='Train data')
+        plot_inducing_points_1D(ax, Z, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
 
-    elif model_type == "classifier":  # 2D classification case
-        tmin, tmax = xtrain.min() - 1.0, xtrain.max() + 1.0
-        t = jnp.linspace(tmin, tmax, 100)
-        X, Y = jnp.meshgrid(t, t, indexing="ij")
-        pts = jnp.stack([X.ravel(), Y.ravel()], axis=-1)
-        
-        logit_dist = predict_lla_dense(map_model_state,
-                               pts,
-                               xtrain if full_lla else zinduc,
-                               model_type="classifier",
-                               alpha=alpha,
-                               full_set_size=xtrain.shape[0])
-
-        # 3) Monte-Carlo expectation of soft-max --------------------------------------
-        num_mc = 3_000                                            # needs a lot!
-        key    = jax.random.PRNGKey(0)
-        logit_samples = logit_dist.sample(seed=key,
-                                        sample_shape=(num_mc,))   # (M, N, K)
-        probs = jax.nn.softmax(logit_samples, axis=-1)            # (M, N, K)
-        mean_probs = probs.mean(axis=0)[:, 0]                     # P(class 1)
-        var_probs = probs.var(axis=0)[:, 0]                       # P(class 1)
-        
-
-        Z = mean_probs.reshape(X.shape)
-        Z2 = var_probs.reshape(X.shape)
-
-        # 4) plot ---------------------------------------------------------------------
-        # — colormaps —
-        cmap1  = mpl.colors.LinearSegmentedColormap.from_list("bwr", ["#009", "white", "#900"])
-        cmap2  = mpl.colors.LinearSegmentedColormap.from_list("bwr", ["white", "black"])
-
-        # — vmin/vmax for each panel —
-        vmin1, vmax1 = 0.0, 1.0
-        vmin2, vmax2 = 0.0, jnp.round(Z2.max(),2)
-
-        # — explicit level arrays spanning full range —
-        nlevels = 50
-        levels1 = np.linspace(vmin1, vmax1, nlevels)
-        levels2 = np.linspace(vmin2, vmax2, nlevels)
-
-        # — fixed‐norms so colorbar always goes 0→vmax —
-        norm1 = mpl.colors.Normalize(vmin1, vmax1)
-        norm2 = mpl.colors.Normalize(vmin2, vmax2)
-
-        # --- Panel 1: predictive mean ---
-        cf1 = ax[0].contourf(
-            X, Y, Z,
-            levels=levels1,
-            cmap=cmap1,
-            norm=norm1,
-        )
-        cbar1 = fig.colorbar(cf1, ax=ax[0], label=r"$E[y^*|x^*,D]$")
-        cbar1.set_ticks(np.linspace(vmin1, vmax1, 6))  # nice round ticks
-
-        # plot_binary_classification_data(xtrain, ytrain, ax=ax[0])
-        ax[0].set_title("GLM predictive mean")
-
-        # --- Panel 2: predictive variance ---
-        cf2 = ax[1].contourf(
-            X, Y, Z2,
-            levels=levels2,
-            cmap=cmap2,
-            norm=norm2,
-        )
-        cbar2 = fig.colorbar(cf2, ax=ax[1], label=r"$V[y^*|x^*,D]$")
-        cbar2.set_ticks(np.linspace(vmin2, vmax2, 6))
-
-        # plot_binary_classification_data(xtrain, ytrain, ax=ax[1])
-        ax[1].set_title("GLM predictive variance")
-
-        # scatterp(*zinduc.T, color="yellow", zorder=8,
-        #         marker="X", label="Inducing points", ax=ax[0])
-        # scatterp(*zinduc.T, color="yellow", zorder=8,
-        #         marker="X", label="Inducing points", ax=ax[1])
-        
-        # ax[0].legend(loc="lower right", framealpha=1.0)
-        # ax[1].legend(loc="lower right", framealpha=1.0)
-        # pdb.set_trace()
         
     plt.tight_layout()
     os.makedirs("fig", exist_ok=True)
     plt.savefig(f"fig/{dataset_name}_{model_type}_lla.pdf")
 
 
-def plot_inducing_scalable(model_type, map_model_state,
-                  xtrain, ytrain,
-                  xtest, ytest,
-                  zinduc,
-                  alpha, rng_inducing,
-                  model, optimizer_map,
-                  m_induc, epochs_induc, dataset_name,
-                  full_lla=False):
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-    if full_lla:
-        plt.title(f"Full LLA / {xtrain.shape[0]} data points")
-    else:
-        plt.title(f"IP LLA / {m_induc} inducing points, {epochs_induc} steps")
 
-    if model_type == "regressor":  # 1D regression case
-        # Create a linear grid for predictions
-        xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
-        fmu_full, fcov_vp_full = predict_lla_scalable(
-            map_model_state, xlin, xtrain, model_type=model_type, alpha=alpha
-        )
-        fmu_opt, fcov_vp_opt = predict_lla_scalable(
-            map_model_state, xlin, zinduc, model_type=model_type, alpha=alpha,
-            full_set_size=xtrain.shape[0]
-        )
-        fcov_full = materialize_covariance(fcov_vp_full, *fmu_full.shape, mode='diag').squeeze()
-        fcov_opt = materialize_covariance(fcov_vp_opt, *fmu_full.shape, mode='diag').squeeze()
-        
-        plot_cinterval(xlin.squeeze(), fmu_full.squeeze(), jnp.sqrt(fcov_full), 
-                       text="full", color='orange', zorder=5)
-        plot_cinterval(xlin.squeeze(), fmu_opt.squeeze(), jnp.sqrt(fcov_opt), 
-                       text="ind. optimized", color='limegreen', zorder=4)
-        
-        # Plot training and test data
-        scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
-        scatterp(xtrain, ytrain, zorder=1, label='Train data')
-        plot_inducing_points_1D(ax, zinduc, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
-
-    elif model_type == "classifier":  # 2D classification case
-        # TODO: currently the dense version has just been pasted and predict_lla dense->fun
-        # tmin, tmax = xtrain.min() - 1.5, xtrain.max() + 1.5
-        tmin, tmax = xtrain.min() - 1.0, xtrain.max() + 1.0
-        t = jnp.linspace(tmin, tmax, 100)
-        X, Y = jnp.meshgrid(t, t, indexing="ij")
-        pts = jnp.stack([X.ravel(), Y.ravel()], axis=-1)  # (num_pts**2, 2)
-        
-        logit_samples = predict_lla_scalable(
-            map_model_state,
-            pts,
-            xtrain if full_lla else zinduc,
-            model_type="classifier",
-            alpha=alpha,
-            full_set_size=xtrain.shape[0],
-            num_samples=512
-        )
-        prob_samples  = jax.nn.softmax(logit_samples, axis=-1)[:,:,0]
-        mean_probs = prob_samples.mean(0)
-        var_probs = prob_samples.var(0)
-
-        # pdb.set_trace()
-        
-        # reshape back to the grid for plotting
-        Z1 = mean_probs.reshape(X.shape)                  # (100, 100)
-        Z2  = var_probs.reshape(X.shape)
-        
-        # — colormaps —
-        cmap1  = mpl.colors.LinearSegmentedColormap.from_list("bwr", ["#009", "white", "#900"])
-        cmap2  = mpl.colors.LinearSegmentedColormap.from_list("bwr", ["white", "black"])
-
-        # — vmin/vmax for each panel —
-        vmin1, vmax1 = 0.0, 1.0
-        vmin2, vmax2 = 0.0, jnp.round(Z2.max(),2)
-
-        # — explicit level arrays spanning full range —
-        nlevels = 50
-        levels1 = np.linspace(vmin1, vmax1, nlevels)
-        levels2 = np.linspace(vmin2, vmax2, nlevels)
-
-        # — fixed‐norms so colorbar always goes 0→vmax —
-        norm1 = mpl.colors.Normalize(vmin1, vmax1)
-        norm2 = mpl.colors.Normalize(vmin2, vmax2)
-
-        # --- Panel 1: predictive mean ---
-        cf1 = ax[0].contourf(
-            X, Y, Z1,
-            levels=levels1,
-            cmap=cmap1,
-            norm=norm1,
-        )
-        cbar1 = fig.colorbar(cf1, ax=ax[0], label=r"$E[y^*|x^*,D]$")
-        cbar1.set_ticks(np.linspace(vmin1, vmax1, 6))  # nice round ticks
-
-        # plot_binary_classification_data(xtrain, ytrain, ax=ax[0])
-        ax[0].set_title("GLM predictive mean")
-
-        # --- Panel 2: predictive variance ---
-        cf2 = ax[1].contourf(
-            X, Y, Z2,
-            levels=levels2,
-            cmap=cmap2,
-            norm=norm2,
-        )
-        cbar2 = fig.colorbar(cf2, ax=ax[1], label=r"$V[y^*|x^*,D]$")
-        cbar2.set_ticks(np.linspace(vmin2, vmax2, 6))
-
-        # plot_binary_classification_data(xtrain, ytrain, ax=ax[1])
-        ax[1].set_title("GLM predictive variance")
-
-        # scatterp(*zinduc.T, color="yellow", zorder=8,
-        #         marker="X", label="Inducing points", ax=ax[0])
-        # scatterp(*zinduc.T, color="yellow", zorder=8,
-        #         marker="X", label="Inducing points", ax=ax[1])
-        
-        # ax[0].legend(loc="lower right", framealpha=1.0)
-        # ax[1].legend(loc="lower right", framealpha=1.0)
-        # pdb.set_trace()
-        
-    plt.tight_layout()
-    os.makedirs("fig", exist_ok=True)
-    plt.savefig(f"fig/{dataset_name}_{model_type}_lla.pdf")
 
 
 
@@ -308,6 +116,12 @@ def main():
                         help="If selected, compute full LLA.")
     parser.add_argument("--scalable", action="store_true",
                         help="Whether to use scalable (matrix free) IP optimization and LLA sampling.")
+    parser.add_argument("--num_mc_samples_lla", type=int, default=500,
+                        help="Number of MC samples for LLA predictive dist.")
+    parser.add_argument("--plot_Z", action="store_true",
+                        help="Whether to plot inducing points.")
+    parser.add_argument("--plot_X", action="store_true",
+                        help="Whether to plot training points.")
     parser.add_argument("--dataset", type=str, required=True,
                         help="Path to an .npz file containing x,y arrays.")
     parser.add_argument("--model_config", type=str, required=True,
@@ -348,7 +162,6 @@ def main():
 
     rng_model = jax.random.PRNGKey(model_seed)
     if model_type == "regressor":
-        # rng_model = {'params': rng_model, 'logvar': zeros_rng}
         model = SimpleRegressor(numh=num_h, numl=num_l)
     elif model_type == "classifier":
         model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
@@ -406,7 +219,6 @@ def main():
             step=epochs_map
         )
         
-        # ? visualize MAP estimator
         plot_map(map_model_state, 
                  (xtrain, ytrain), 
                  (xtest, ytest), 
@@ -423,8 +235,6 @@ def main():
             prefix=map_ckpt_prefix,
             target=model_state
         )
-        
-    # pdb.set_trace()
 
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
@@ -438,13 +248,6 @@ def main():
     
 
     if args.mode in ["train_inducing", "full_pipeline"]:
-        # lr_schedule = optax.exponential_decay(
-        #     init_value       = lr_inducing,     # starting lr
-        #     transition_steps = 100,      # decay every 100 updates
-        #     decay_rate       = 0.8,      # multiply by 0.1
-        #     staircase        = True      # <-- keep it piece-wise constant
-        # )
-        # zoptimizer = optax.adam(lr_schedule)
         zoptimizer = optax.adam(lr_inducing)
         
         zinducing = train_inducing_points(
@@ -481,19 +284,35 @@ def main():
 
     # =========== PART C: Visualization ===========
     if args.mode in ["visualize", "train_inducing", "full_pipeline"]:
-        plot_fun = plot_inducing_scalable if args.scalable else plot_inducing_dense
-        plot_fun(model_type, map_model_state, 
-                      xtrain, ytrain, 
-                      xtest, ytest,
-                      zinducing, 
-                      alpha, 
-                      rng_inducing,
-                      model, 
-                      optimizer_map, 
-                      m_inducing, 
-                      epochs_inducing, 
-                      dataset_name=args.dataset,
-                      full_lla=args.full)
+        os.makedirs("fig", exist_ok=True)
+        
+        fig, ax = plt.subplots(1, 2, figsize=(13, 5))
+        full_lla = args.full
+        if full_lla:
+            plt.title(f"Full LLA / {xtrain.shape[0]} data points")
+        else:
+            plt.title(f"IP LLA / {m_inducing} inducing points, {epochs_inducing} steps")
+        plot_lla_2D_classification(
+            fig,
+            ax,
+            map_model_state,
+            xtrain,
+            ytrain,
+            zinducing,
+            alpha,
+            mode="full_lla" if args.full else "ip_lla",
+            matrix_free=args.scalable,
+            num_mc_samples=args.num_mc_samples_lla,
+            plot_Z=args.plot_Z,
+            plot_X=args.plot_X,
+        )
+        plt.tight_layout()
+        plt.savefig(f"fig/{args.dataset}_{model_type}_lla.pdf")
+        
+        # ! LA vs LLA example plot!
+        # make_predictive_mean_figure(map_model_state, xtrain, ytrain, alpha, num_mc_samples=args.num_mc_samples_lla)
+        # plt.savefig(f"fig/la_vs_lla.pdf", dpi=300, bbox_inches="tight")
+        
         print("[DONE] Visualization complete.")
 
 

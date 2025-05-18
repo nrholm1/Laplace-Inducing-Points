@@ -76,11 +76,11 @@ def main():
     epochs_map = 5
     batch_size = 32
     seed_inducing = 1337
-    m_inducing = 200
+    m_inducing = 256
     lr_inducing = 0.01
     model_type = "classifier"
     mc_samples = 0 # dummy param
-    alpha_inducing = 0.5
+    alpha = 0.05
     epochs_inducing = 100
     
 
@@ -97,7 +97,7 @@ def main():
     # =========== MAP Training ===========
     if args.mode in ["train_map", "full_pipeline"]:
         # Train MAP and save a checkpoint.
-        map_model_state = train_map(model_state, train_loader, test_loader, model_type="classifier", num_epochs=epochs_map)
+        map_model_state = train_map(model_state, train_loader, test_loader, model_type="classifier", num_epochs=epochs_map, alpha=alpha)
         save_checkpoint(map_model_state, ckpt_dir="./checkpoint/map", prefix=map_ckpt_prefix, step=epochs_map)
         print("[DONE] MAP training.")
         if args.mode == "train_map":
@@ -128,7 +128,7 @@ def main():
             rng=rng_inducing,
             model_type=model_type,
             num_mc_samples=mc_samples,
-            alpha=alpha_inducing,
+            alpha=alpha,
             num_steps=epochs_inducing,
             full_set_size=xtrain.shape[0],
         )

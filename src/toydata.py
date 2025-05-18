@@ -17,7 +17,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import matplotlib.pyplot as plt
 
-from src.nplot import scatterp
+from src.nplot import scatterp, plot_regression_data, plot_binary_classification_data
 
 """DATASET CLASSES AND UTILS"""
 
@@ -214,14 +214,6 @@ def load_mnist_numpy(train=True):
 
 """TINY PLOTTING UTILS"""
 
-
-def plot_regression_data(x,y):
-    scatterp(x, y, label='data')
-
-def plot_binary_classification_data(x,y,ax=plt):
-    scatterp(*x[y==0].T, label='Class 0', color='salmon', zorder=2, ax=ax)
-    scatterp(*x[y==1].T, label='Class 1', zorder=2, ax=ax)
-    
     
 def plot_data(x,y,name,plotf):
     import matplotlib.pyplot as plt

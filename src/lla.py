@@ -80,6 +80,53 @@ def predict_lla_dense(map_state, Xnew, Z, model_type, alpha, full_set_size=None)
         loc=f_mean,
         covariance_matrix=f_cov
     )
+
+def predict_la_samples_dense(
+    map_state,
+    Xnew: jnp.ndarray,
+    Z: jnp.ndarray,
+    model_type: str,
+    alpha: float,
+    full_set_size: int = None,
+    num_mc_samples: int = 100,
+    key = None,
+):
+    # 1) get the dense Hessian‐approx inverse & MAP‐flat vector
+    S_inv, flat_params_map, unravel_fn = compute_curvature_approx_dense(
+        map_state, Z,
+        model_type=model_type,
+        alpha=alpha,
+        full_set_size=full_set_size
+    )
+    # invert to get covariance
+    S = jnp.linalg.inv(S_inv)
+
+    # 2) set up PRNG
+    if key is None:
+        key = jax.random.PRNGKey(0)
+    # draw all parameter samples at once
+    flat_samples = jax.random.multivariate_normal(
+        key,
+        mean=flat_params_map,
+        cov=S,
+        shape=(num_mc_samples,)
+    )  # → (num_mc_samples, D_flat)
+
+    # 3) define one‐sample forward pass
+    def apply_flat(flat_p):
+        p = unravel_fn(flat_p)
+        if model_type == "regressor":
+            # your regressor apply_fn might require a return_logvar flag
+            return map_state.apply_fn(p, Xnew, return_logvar=False).squeeze()
+        else:
+            # classification logits
+            return map_state.apply_fn(p, Xnew)            # → (Nnew, n_classes)
+
+    # 4) vectorise over the drawn parameter vectors
+    f_samples = jax.vmap(apply_flat)(flat_samples)
+    # shape = (num_mc_samples, Nnew) or (num_mc_samples, Nnew, n_classes)
+
+    return f_samples
     
 
 
