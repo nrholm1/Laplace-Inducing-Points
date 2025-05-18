@@ -14,7 +14,7 @@ from seaborn import set_style
 set_style('darkgrid')
 
 from src.toymodels import SimpleRegressor, SimpleClassifier
-from src.toydata import JAXDataset, get_dataloaders
+from src.data import JAXDataset, get_dataloaders
 from src.nplot import make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
 
 from src.train_map import train_map
@@ -104,9 +104,6 @@ def plot_inducing_dense(model_type, map_model_state,
 
 
 
-
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", type=str, default="full_pipeline",
@@ -176,7 +173,7 @@ def main():
     opt_cfg = load_yaml(args.optimization_config)
     alpha = opt_cfg["alpha"]
     map_cfg = opt_cfg["map"]
-    inducing_cfg = opt_cfg["inducing"]
+    inducing_cfg = opt_cfg["ip"]
 
     map_batch_size = map_cfg["batch_size"]
     epochs_map = map_cfg["epochs_map"]
@@ -239,11 +236,8 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    # m_inducing = min(m_inducing, len(test_dataset))
     train_loader_init, _ = get_dataloaders(train_dataset, test_dataset, m_inducing)
     zinit = next(iter(train_loader_init))[0]
-    # zinit = jax.random.uniform(key=rng_inducing, shape=zinit.shape, minval=zinit.min(), maxval=zinit.max())
-    # zinit = jax.random.normal(key=rng_inducing, shape=zinit.shape) * .4
     train_loader_induc, _ = get_dataloaders(train_dataset, test_dataset, inducing_batch_size)
     
 

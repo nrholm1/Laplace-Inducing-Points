@@ -4,7 +4,7 @@ map:
   epochs_map: 5000
   lr_map: 0.001
   seed: 127831678241_123
-inducing:
+ip:
   m_induc: 40
   batch_size: 128
   epochs_induc: 250

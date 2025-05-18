@@ -1,4 +1,4 @@
 num_h: 8
 num_l: 4
-model_type: "regressor"
+model_type: regressor
 rng_seed: 1234

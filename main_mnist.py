@@ -15,8 +15,8 @@ from tqdm import tqdm
 
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
-from src.toymodels import CNN
-from src.toydata import JAXDataset, jax_collate_fn, get_dataloaders, load_mnist_numpy
+from src.scalemodels import CNN
+from src.data import JAXDataset, jax_collate_fn, get_dataloaders, load_mnist_numpy
 from src.utils import load_array_checkpoint, load_checkpoint, print_options, save_array_checkpoint, save_checkpoint
 
 # Set random seeds for reproducibility.
@@ -33,24 +33,6 @@ def create_train_state(rng, model, learning_rate, momentum):
     params = model.init(rng, dummy_inp)
     tx = optax.adamw(learning_rate=learning_rate, b1=momentum)
     return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
-
-
-def plot_map_mnist(map_model_state, data_batch):
-        X,y = data_batch
-        fig,axs = plt.subplots(4,4,figsize=(12,12))
-        
-        # prediction
-        logits = map_model_state.apply_fn(map_model_state.params, X)
-        yhat = logits.argmax(axis=1)
-
-        for i,ax in enumerate(axs.flatten()):
-            ax.set_title(f"Prediction: {yhat[i]}")
-            ax.imshow(X[i], cmap='gray')
-            ax.grid(False)
-        
-        plt.suptitle(f"[MNIST] MAP estimator")
-        plt.tight_layout()
-        plt.savefig("fig/map_mnist.pdf")
 
 
 

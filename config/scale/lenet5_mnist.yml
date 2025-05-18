@@ -1,0 +1,19 @@
+model:
+  name: LeNet5
+  type: classifier
+  seed: 123123123
+optimization:
+  alpha: 0.01
+  full_set_size: 60_000
+  map:
+    batch_size: 128
+    epochs_map: 20
+    lr: 0.0005
+    seed: 32132132
+  ip:
+    m: 100
+    batch_size: 128
+    epochs: 100
+    lr: 0.1
+    mc_samples: 5
+    seed: 280300

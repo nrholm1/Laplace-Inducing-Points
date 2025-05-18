@@ -34,28 +34,37 @@ clean:
 #################################################################################
 
 main = main.py
+scaletrain = scale_experiments/train.py
 datamain = src/toydata.py
 
 DEVICE = cpu
 
 DATASET = banana
 MODEL = toyclassifier
+SCALE_DATASET = mnist
+SCALE_MODEL = lenet5
 
 
 run:
 	$(PYTHON_INTERPRETER) $(main) $(mode) \
 		--dataset $(DATASET) \
-		--model_config config/$(MODEL)_$(DATASET).yml \
-		--optimization_config config/optimization_$(MODEL)_$(DATASET).yml \
+		--model_config config/toy/$(MODEL)_$(DATASET).yml \
+		--optimization_config config/toy/optimization_$(MODEL)_$(DATASET).yml \
 		$(EXTRA_ARGS)
 
 debug_run:
 	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(main) $(mode) \
 		--dataset $(DATASET) \
-		--model_config config/$(MODEL)_$(DATASET).yml \
-		--optimization_config config/optimization_$(MODEL)_$(DATASET).yml > debug.log 2>&1 &
+		--model_config config/toy/$(MODEL)_$(DATASET).yml \
+		--optimization_config config/toy/optimization_$(MODEL)_$(DATASET).yml > debug.log 2>&1 &
 	sleep 1
 	@echo "debugpy ready"
+
+train_scale:
+	$(PYTHON_INTERPRETER) $(scaletrain) $(mode) \
+		--dataset $(SCALE_DATASET) \
+		--config config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml \
+		$(EXTRA_ARGS)
 
 # run targets
 train_map:
@@ -74,6 +83,12 @@ visualize_full:
 	$(MAKE) run mode=visualize EXTRA_ARGS=--full
 svisualize:
 	$(MAKE) run mode=visualize EXTRA_ARGS=--scalable
+
+train_map_scale:
+	$(MAKE) train_scale mode=train_map
+train_ip_scale:
+	$(MAKE) train_scale "mode=train_inducing --scalable"
+
 
 # debug targets
 debug_map:

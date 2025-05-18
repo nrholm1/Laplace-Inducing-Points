@@ -10,7 +10,7 @@ from flax.training import train_state
 
 from src.toymodels import SimpleClassifier, SimpleRegressor
 from src.utils import load_yaml, load_checkpoint, load_array_checkpoint
-from src.toydata import JAXDataset, get_dataloaders
+from src.data import JAXDataset, get_dataloaders
 
 # jax.config.update("jax_enable_x64", True)
 
