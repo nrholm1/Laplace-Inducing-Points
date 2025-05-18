@@ -7,6 +7,7 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 
 # 0) --- Tell Matplotlib to use LaTeX for all text, load your exact font setup, embed TrueType fonts ---
 mpl.rcParams.update({
@@ -24,45 +25,52 @@ mpl.rcParams.update({
     "font.size": 12
 })
 
-# 1) build an asymmetric, slightly wiggly posterior density  ----------------
-def posterior_density(x):
-    comp1 = 0.6 * np.exp(-0.5 * ((x - 0.0) / 1.0) ** 2)
-    comp2 = 0.25 * np.exp(-0.5 * ((x - 1.8) / 0.7) ** 2)
-    ripples = 0.05 * (np.sin(1 + 3 * x) + 1.2)
-    return comp1 + comp2 + np.clip(ripples, 0, None) + 0.03
+# 1) Define un-normalized “nice” posterior shape
+def unnorm_nice_posterior(x):
+    # three-component Gaussian mixture
+    comp = (
+        0.85 * norm.pdf(x, loc=1.0, scale=0.2)
+      + 0.025 * norm.pdf(x, loc=0.5, scale=0.05)
+      + 0.125 * norm.pdf(x, loc=1.5, scale=0.1)
+    )
+    return comp
 
-x = np.linspace(-4, 5, 800)
-p = posterior_density(x)
+# 2) Normalize on a finite grid via trapezoidal rule
+x = np.linspace(-1, 3, 1000)
+u = unnorm_nice_posterior(x)
+Z = 1*np.trapezoid(u, x)
+p = u / Z
 
-# 2) find MAP & Laplace approx --------------------------------------------
-idx_max = np.argmax(p)
-x0 = x[idx_max]
-p0 = p[idx_max]
+# 3) Laplace around the mode
+idx = np.argmax(p)
+x0 = x[idx]
+p0 = p[idx]
 h = x[1] - x[0]
-logp = np.log(p + 1e-12)
-second_deriv = (logp[idx_max + 1] - 2*logp[idx_max] + logp[idx_max - 1]) / h**2
+logp = np.log(p + 1e-16)
+second_deriv = (logp[idx+1] - 2*logp[idx] + logp[idx-1]) / h**2
 sigma = np.sqrt(-1.0 / second_deriv)
-laplace = p0 * np.exp(-0.5 * ((x - x0)/sigma)**2)
+# laplace = p0 * np.exp(-0.5 * ((x - x0)/sigma)**2)
+laplace = norm.pdf(x, loc=x0, scale=sigma)
 
 # 3) plot ------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(8, 3))
 
-ax.plot(x, p,      linewidth=2,
-        label=r"True posterior $p(\theta\mid\mathcal{D})$",
-        color="green")
 ax.plot(x, laplace, linestyle="--", linewidth=3,
         label=r"Laplace Approximation $q(\theta)$",
         color="orange")
+ax.plot(x, p,      linewidth=2,
+        label=r"True posterior $p(\theta\mid\mathcal{D})$",
+        color="green")
 
 ax.set_xlabel(r"Parameter $\theta$")
 ax.set_ylabel("Density")
 
 ax.legend(frameon=False, loc="upper right")
-ax.set_xlim(-4, 5)
-ax.set_ylim(-0.01, ax.get_ylim()[1]*1.1)
+ax.set_xlim(0.2, 2.1)
+ax.set_ylim(-0.01, ax.get_ylim()[1]*1.04)
 
 # vertical mode line + label
-ax.axvline(x0, linestyle=":", color="#00a5ee")
+ax.vlines(x0, ymin=0, ymax=p0, linewidth=2, linestyle=":", color="#00a5ee")
 ax.text(
     x0, ax.get_ylim()[1],
     r"Posterior mode $\theta_{\mathbf{MAP}}$",
@@ -76,10 +84,12 @@ ax.text(
     )
 )
 
+ax.scatter(x0, p0, marker='*', s=200, zorder=10, color='#00a5ee')
+
 # clean up axes
 ax.set_xticks([]); ax.set_yticks([])
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 
 plt.tight_layout()
-plt.savefig("la_example.pdf", dpi=300, bbox_inches="tight")
+plt.savefig("fig/la_example.pdf", dpi=300, bbox_inches="tight")
