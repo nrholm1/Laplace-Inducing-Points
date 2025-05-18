@@ -243,7 +243,7 @@ def main():
     train_loader_init, _ = get_dataloaders(train_dataset, test_dataset, m_inducing)
     zinit = next(iter(train_loader_init))[0]
     # zinit = jax.random.uniform(key=rng_inducing, shape=zinit.shape, minval=zinit.min(), maxval=zinit.max())
-    zinit = jax.random.normal(key=rng_inducing, shape=zinit.shape) * .4
+    # zinit = jax.random.normal(key=rng_inducing, shape=zinit.shape) * .4
     train_loader_induc, _ = get_dataloaders(train_dataset, test_dataset, inducing_batch_size)
     
 
