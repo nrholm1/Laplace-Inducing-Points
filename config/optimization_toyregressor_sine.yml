@@ -6,6 +6,7 @@ map:
   seed: 127831678241_123
 inducing:
   m_induc: 40
+  batch_size: 128
   epochs_induc: 250
   lr_induc: 0.01
   mc_samples: 5

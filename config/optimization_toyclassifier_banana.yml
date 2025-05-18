@@ -5,8 +5,9 @@ map:
   lr_map: 0.005
   seed: 127831678241
 inducing:
-  m_induc: 50
-  epochs_induc: 100
-  lr_induc: 0.05
+  m_induc: 90
+  batch_size: 128
+  epochs_induc: 200
+  lr_induc: 0.01
   mc_samples: 5
   seed: 4231551
