@@ -2,7 +2,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import numpy as np
 
-from src.data import JAXDataset, get_dataloaders as _get_dataloaders, jax_collate_fn
+from src.data import JAXDataset, NumpyDataset, get_dataloaders as _get_dataloaders, jax_collate_fn, numpy_collate_fn
 
 
 def load_mnist_numpy(train=True):
@@ -33,9 +33,12 @@ def get_dataloaders(name, batch_size):
     if name == 'mnist':
         xtrain, ytrain = load_mnist_numpy(train=True)
         xtest, ytest = load_mnist_numpy(train=False)
-        train_dataset = JAXDataset(xtrain, ytrain)
-        test_dataset = JAXDataset(xtest, ytest)
-        train_loader, test_loader = _get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=jax_collate_fn)
+        # train_dataset = JAXDataset(xtrain, ytrain)
+        # test_dataset = JAXDataset(xtest, ytest)
+        # train_loader, test_loader = _get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=jax_collate_fn)
+        train_dataset = NumpyDataset(xtrain, ytrain)
+        test_dataset = NumpyDataset(xtest, ytest)
+        train_loader, test_loader = _get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=numpy_collate_fn)
     elif name == ...: # todo add more models
         ...
     

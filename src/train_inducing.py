@@ -92,6 +92,8 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     inner_shape = dummy.shape
     d           = dummy.size
     I_d         = jnp.eye(d, dtype=float)
+    print(inner_shape)
+    print(d)
     
     # ! option 1: use conjugate gradient 
     def S_z_inv_vp_direct(v):
@@ -106,10 +108,11 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         x,info = jax.scipy.sparse.linalg.cg(A=inner, b=u)
         return alpha_inv*v - alpha_inv**2*W(x)
     
+    WTW = jax.vmap(lambda e: 
+            WT(W(e.reshape(inner_shape)))
+        )(I_d).reshape(d,d)
+    print(WTW.shape)
     def S_z_inv_vp_woodbury_dense(v):
-        WTW = jax.vmap(lambda e: 
-                WT(W(e.reshape(inner_shape)))
-            )(I_d).reshape(d,d)
         u = WT(v).reshape(d)
         x   = jax.scipy.linalg.solve(
             beta_inv*I_d + alpha_inv*WTW,
@@ -121,16 +124,22 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     
     # ! use same random vectors for StochTrace and SLQ
     x0 = jnp.ones((D,), dtype=float)
-    nsamples_st = 256
+    nsamples_st  = 64 # 256
     nsamples_slq = 2
     sampler = matfree_stochtrace.sampler_rademacher(x0, num=nsamples_st)
     probes = sampler(key)
+    # keys = jax.random.split(key, nsamples_st+nsamples_slq)
+    # keys_st = keys[:nsamples_st]
+    # keys_slq = keys[nsamples_st:]
     st_sampler =  lambda _: probes
     slq_sampler = lambda _: probes[:nsamples_slq]
     
     def stoch_trace(Xfun):
         integrand = matfree_stochtrace.integrand_trace()
         estimator = matfree_stochtrace.estimator(integrand, sampler=st_sampler)
+        # estimator = functools.partial(estimator, Xfun)
+        # traces = jax.lax.map(jax.checkpoint(estimator), keys_st)
+        # return traces.mean()
         traces = estimator(Xfun, key)
         return traces
     trace_term = stoch_trace(composite_vp) 
@@ -142,6 +151,9 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         tridiag_sym = decomp.tridiag_sym(num_matvecs)
         problem = funm.integrand_funm_sym_logdet(tridiag_sym)
         estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
+        # estimator = functools.partial(estimator, Xfun)
+        # logdets = jax.lax.map(jax.checkpoint(estimator), keys_slq)
+        # return logdets.mean()
         logdets = estimator(Xfun, key)
         return logdets
     logdet_term = slq_logdet(S_z_vp)
@@ -216,8 +228,8 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
     ub = dataset_sample.max(axis=0)
     
     # todo for debugging
-    fig, ax = plt.subplots(figsize=(12, 8))
-    trajectory = [] 
+    # fig, ax = plt.subplots(figsize=(12, 8))
+    # trajectory = [] 
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
@@ -228,6 +240,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         if step % 4 == 0:
             rng = jax.random.fold_in(rng, step) # todo TEST holding probes constant
         
+        # pdb.set_trace()
         z, opt_state, loss = optimize_step(
             z, 
             x_sample, 
@@ -241,6 +254,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             full_set_size=full_set_size,
             scalable=scalable,
         )
+        # pdb.set_trace()
         # ! Enforce constraints on x (and w, if necessary)
         z = jnp.clip(z, 
                      lb*(1 - 0.2*jnp.sign(lb)),
@@ -250,29 +264,29 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
         
         # todo for debug: every 2 steps, record & plot
-        if step % 4 == 0:
-            # convert to NumPy for plotting
-            z_np = np.asarray(z)
-            trajectory.append(z_np)
+        # if step % 4 == 0:
+        #     # convert to NumPy for plotting
+        #     z_np = np.asarray(z)
+        #     trajectory.append(z_np)
 
-            traj = np.stack(trajectory)    # shape (n_points, 2)
-            ax.clear()
-            ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
-            # plot_full_dataset_fn_debug()
-            ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
-            ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
-            ax.set_xlabel('z[0]')
-            ax.set_ylabel('z[1]')
-            ax.set_title(f'Latent Trajectory after {step} steps')
-            scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
-            plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
+        #     traj = np.stack(trajectory)    # shape (n_points, 2)
+        #     ax.clear()
+        #     ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
+        #     # plot_full_dataset_fn_debug()
+        #     ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
+        #     ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
+        #     ax.set_xlabel('z[0]')
+        #     ax.set_ylabel('z[1]')
+        #     ax.set_title(f'Latent Trajectory after {step} steps')
+        #     scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+        #     plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
             
-            # force a draw
-            fig.canvas.draw()
-            fig.canvas.flush_events()
-            plt.savefig("test.png")
+        #     # force a draw
+        #     fig.canvas.draw()
+        #     fig.canvas.flush_events()
+        #     plt.savefig("test.png")
             
-            trajectory = trajectory[-3:]
+        #     trajectory = trajectory[-3:]
         
     
     return z

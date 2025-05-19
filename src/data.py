@@ -15,6 +15,7 @@ class JAXDataset(data.Dataset):
 
     def __getitem__(self, idx):
         return self.x[idx], self.y[idx] 
+    
 
 def jax_collate_fn(batch):
     """Ensures that the batch remains a JAX array instead of PyTorch tensors."""
@@ -24,15 +25,29 @@ def jax_collate_fn(batch):
     return x_batch, y_batch
 
 
-# todo not completely sure if it works!
+# # todo not completely sure if it works!
+# def numpy_collate_fn(batch):
+#     if isinstance(batch[0], np.ndarray):
+#         return np.stack(batch)
+#     elif isinstance(batch[0], (tuple,list)):
+#         transposed = zip(*batch)
+#         return [numpy_collate_fn(samples) for samples in transposed]
+#     else:
+#         return np.array(batch)
+
+class NumpyDataset(data.Dataset):
+    def __init__(self, x, y):
+        self.x = x  # still a plain np.ndarray
+        self.y = y
+    def __len__(self):
+        return len(self.x)
+    def __getitem__(self, idx):
+        return self.x[idx], self.y[idx]
+    
+
 def numpy_collate_fn(batch):
-    if isinstance(batch[0], np.ndarray):
-        return np.stack(batch)
-    elif isinstance(batch[0], (tuple,list)):
-        transposed = zip(*batch)
-        return [numpy_collate_fn(samples) for samples in transposed]
-    else:
-        return np.array(batch)
+    xs, ys = zip(*batch)
+    return np.stack(xs), np.stack(ys)
 
 
 def get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=numpy_collate_fn):
