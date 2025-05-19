@@ -163,7 +163,7 @@ def plot_lla_2D_classification(
     if plot_Z or plot_X: ax[1].legend(loc="lower right", framealpha=1.0)
 
 
-def plot_map_2D_classification(fig, ax, map_model_state, tmin, tmax, alpha, colorbar=True):
+def plot_map_2D_classification(fig, ax, map_model_state, tmin, tmax, colorbar=True):
     cmap = get_palette()
     t = jnp.linspace(tmin, tmax, 150)
     X,Y = jnp.meshgrid(t, t, indexing='ij')

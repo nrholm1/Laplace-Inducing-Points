@@ -1,7 +1,13 @@
+import flax
+import flax.jax_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
 import torch.utils.data as data
+from flax import jax_utils
+from collections import deque
+from typing import Iterable, Iterator, Any, Deque
+
 
 """DATASET CLASSES AND UTILS"""
 
@@ -26,14 +32,14 @@ def jax_collate_fn(batch):
 
 
 # # todo not completely sure if it works!
-# def numpy_collate_fn(batch):
-#     if isinstance(batch[0], np.ndarray):
-#         return np.stack(batch)
-#     elif isinstance(batch[0], (tuple,list)):
-#         transposed = zip(*batch)
-#         return [numpy_collate_fn(samples) for samples in transposed]
-#     else:
-#         return np.array(batch)
+def numpy_collate_fn_old(batch):
+    if isinstance(batch[0], np.ndarray):
+        return np.stack(batch)
+    elif isinstance(batch[0], (tuple,list)):
+        transposed = zip(*batch)
+        return [numpy_collate_fn(samples) for samples in transposed]
+    else:
+        return np.array(batch)
 
 class NumpyDataset(data.Dataset):
     def __init__(self, x, y):
@@ -50,34 +56,55 @@ def numpy_collate_fn(batch):
     return np.stack(xs), np.stack(ys)
 
 
-def get_dataloaders(train_dataset, test_dataset, batch_size, num_workers=1, collate_fn=numpy_collate_fn):
+def get_dataloaders(train_dataset, test_dataset, batch_size, num_workers=0, collate_fn=numpy_collate_fn_old):
     train_loader = data.DataLoader(train_dataset, 
                                    batch_size=batch_size, 
                                    shuffle=True, 
                                    collate_fn=collate_fn,
                                    num_workers=num_workers,
-                                   pin_memory=True,
+                                #    pin_memory=True,
                                    drop_last=True)
     test_loader = data.DataLoader(test_dataset, 
                                   batch_size=batch_size, 
                                   shuffle=False, 
                                   collate_fn=collate_fn, 
                                    num_workers=num_workers,
-                                   pin_memory=True,
+                                #    pin_memory=True,
                                   drop_last=True)
     return train_loader, test_loader
 
 
-def prefetch(loader, size):
-    it = iter(loader)
-    buf = []
-    for _ in range(size):
-        try:
-            buf.append(jax.device_put(next(it)))
+
+
+def _fifo_prefetch(it: Iterable[Any], *, size: int) -> Iterator[Any]:
+    """
+    Keep `size` future elements from `it` parked on the current default device.
+
+    Works for a single or multi-GPU host, but **does not shard** – each yielded
+    item is copied to exactly one device.
+    """
+    dev   = jax.devices()[0]               # choose first visible device
+    buf: Deque[Any] = deque()
+
+    it = iter(it)
+    try:                                   # prime the buffer once
+        for _ in range(size):
+            buf.append(jax.device_put(next(it), device=dev))
+    except StopIteration:
+        pass
+
+    while buf:                             # main loop
+        yield buf[0]                       # serve oldest prefetched batch
+        try:                               # enqueue one more if available
+            buf.append(jax.device_put(next(it), device=dev))
         except StopIteration:
-            break
-    for batch in it:
-        yield buf.pop(0)
-        buf.append(jax.device_put(batch))
-    while buf:
-        yield buf.pop(0)
+            pass
+        buf.popleft()
+
+def make_iter(loader, *, prefetch: int = 2):
+    """
+    Turn a PyTorch `DataLoader` into an iterator of **DeviceArrays** with
+    `prefetch` batches already waiting on the accelerator.
+    """
+    to_jnp = lambda b: jax.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float32), b)
+    return _fifo_prefetch((to_jnp(b) for b in loader), size=prefetch)

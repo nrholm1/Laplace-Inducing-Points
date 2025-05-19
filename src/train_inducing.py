@@ -1,6 +1,6 @@
 from functools import partial
 import functools
-import pdb
+# import pdb
 import jax
 import jax.numpy as jnp
 from matplotlib import pyplot as plt
@@ -16,6 +16,7 @@ from src.stochtrace import hutchpp_mvp, na_hutchpp_mvp, stochastic_trace_estimat
 from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params
 from src.toydata import plot_binary_classification_data
+from src.data import make_iter
 from src.nplot import scatterp
 
 
@@ -55,7 +56,7 @@ def var_kl_fun(q, alpha):
 def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, full_set_size=None):
     q, unravel_fn = posterior_lla_dense(
         state,
-        alpha=alpha,# todo correct alpha used here?
+        alpha=alpha,
         x=z,
         model_type=model_type,
         full_set_size=full_set_size,
@@ -64,6 +65,40 @@ def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, f
     kl_term = var_kl_fun(q, alpha)
     reg_term = 0 # ! reg_coeff * (jnp.sum(jnp.square(x)) + jnp.sum(jnp.square(w)))
     return - (loglik_term - kl_term) + reg_term
+
+def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
+    """Dense WᵀW with O(block·#params) peak memory."""
+
+    @jax.remat
+    def col_block(start):
+        # columns  start … start+block-1
+        rows = start + jnp.arange(block, dtype=jnp.int32)     # (block,)
+        # Eye block  -> (block, d)  -> (block, M, C)
+        E_blk = jax.nn.one_hot(rows, d, dtype=dtype)\
+                    .reshape((block,) + inner_shape)
+        # (block, d)   each row = WT(W(e_j))
+        cols = jax.vmap(lambda e: WT(W(e)).reshape(-1))(E_blk)
+        return cols.astype(dtype)                             # (block, d)
+
+    n_blocks = (d + block - 1) // block                       # ceil(d/block)
+
+    def body(b, WTW):
+        start = b * block
+        cols  = col_block(start)                              # (block,d)
+        cols  = cols[: , :d]                                  # tail block trim
+        colsT = cols.T                                        # (d, block’)
+
+        # write into full matrix at (0, start)
+        WTW = jax.lax.dynamic_update_slice(WTW, colsT,
+                                           (0, start))
+        return WTW
+
+    WTW0 = jnp.zeros((d, d), dtype=dtype)
+    WTW  = jax.lax.fori_loop(0, n_blocks, body, WTW0)
+
+    # enforce symmetry (numerically safer than trusting round-off)
+    return jnp.triu(WTW) + jnp.triu(WTW, 1).T
+
 
 
 def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set_size=None):
@@ -89,11 +124,6 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         full_set_size=None)
     
     dummy       = WT(jnp.zeros(D))
-    inner_shape = dummy.shape
-    d           = dummy.size
-    I_d         = jnp.eye(d, dtype=float)
-    print(inner_shape)
-    print(d)
     
     # ! option 1: use conjugate gradient 
     def S_z_inv_vp_direct(v):
@@ -108,9 +138,15 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         x,info = jax.scipy.sparse.linalg.cg(A=inner, b=u)
         return alpha_inv*v - alpha_inv**2*W(x)
     
-    WTW = jax.vmap(lambda e: 
-            WT(W(e.reshape(inner_shape)))
-        )(I_d).reshape(d,d)
+    inner_shape = dummy.shape
+    d           = dummy.size
+    I_d         = jnp.eye(d, dtype=float)
+    print(inner_shape)
+    print(d)
+    # WTW = jax.vmap(lambda e: 
+    #         WT(W(e.reshape(inner_shape)))
+    #     )(I_d).reshape(d,d)
+    WTW = build_WTW(W, WT, inner_shape, d, dtype=float, block=64)
     print(WTW.shape)
     def S_z_inv_vp_woodbury_dense(v):
         u = WT(v).reshape(d)
@@ -120,15 +156,17 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         return alpha_inv*v - alpha_inv**2*W(x.reshape(inner_shape))
     
     def composite_vp(v):
+        # return S_vp(S_z_inv_vp_direct(v))
         return S_vp(S_z_inv_vp_woodbury_dense(v))
+        # return S_vp(S_z_inv_vp_woodbury_cg(v))
     
     # ! use same random vectors for StochTrace and SLQ
     x0 = jnp.ones((D,), dtype=float)
-    nsamples_st  = 64 # 256
+    nsamples_st  = 16 # 256
     nsamples_slq = 2
     sampler = matfree_stochtrace.sampler_rademacher(x0, num=nsamples_st)
     probes = sampler(key)
-    # keys = jax.random.split(key, nsamples_st+nsamples_slq)
+    keys = jax.random.split(key, nsamples_st+nsamples_slq)
     # keys_st = keys[:nsamples_st]
     # keys_slq = keys[nsamples_st:]
     st_sampler =  lambda _: probes
@@ -206,7 +244,8 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
 def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, scalable, plot_full_dataset_fn_debug=None):
     z = zinit
     opt_state = zoptimizer.init(z)
-    _iter = iter(dataloader)
+    # _iter = iter(dataloader)
+    _iter = make_iter(dataloader)
     
     def get_next_sample(num_batches=1):
         nonlocal _iter 
@@ -215,7 +254,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             try:
                 batch = next(_iter)
             except StopIteration:
-                _iter = iter(dataloader)
+                _iter = make_iter(dataloader)
                 batch = next(_iter)
             sample_batches.append(batch)
         sample = list(zip(*sample_batches))

@@ -11,6 +11,8 @@ from tqdm import tqdm
 from flax.core.frozen_dict import unfreeze
 from flax.traverse_util   import flatten_dict
 
+from src.data import make_iter
+
 # --------------------------------------------------------------------------- #
 #  Helper: L2 negative log-prior  (½ α ‖θ‖²)                                  #
 # --------------------------------------------------------------------------- #
@@ -76,7 +78,6 @@ def nl_posterior_fun_classification(state, params, batch, prior_precision):
     nlp = nl_prior_fun(params, weight_precision=prior_precision, bias_precision=prior_precision)
     return nll + nlp
 
-
 @functools.partial(jax.jit, static_argnums=2) 
 def _map_step(state, batch, posterior_fn, prior_precision):
     def loss_fn(params):
@@ -111,7 +112,7 @@ def train_map(
     test_loader,
     *,
     model_type          : str,                         # "regressor" | "classifier"
-    num_epochs          : int   = 1500,
+    num_epochs          : int,
     alpha     : float = 0.05,               # α (larger ⇒ stronger decay)
 ):
     """
@@ -131,14 +132,14 @@ def train_map(
     pbar = tqdm(range(num_epochs), ncols=80)
     for epoch in pbar:
         # ── optimise one epoch ────────────────────────────────────────────
-        for batch in train_loader:
+        for batch in make_iter(train_loader):
             state, train_loss = _map_step(state, batch, posterior_fn, alpha)
 
         # ── evaluate every 10 epochs ──────────────────────────────────────
         if epoch % 10 == 0:
             test_loss = 0.0
             test_acc  = 0.0
-            for batch in test_loader:
+            for batch in make_iter(test_loader):
                 metrics   = eval_step(state, batch)
                 test_loss += metrics[0]
                 if model_type == "classifier":
@@ -146,7 +147,7 @@ def train_map(
 
             n = len(test_loader)
             if model_type == "classifier":
-                descr = f"[nll={test_loss/n:6.4f}  acc={test_acc/n:5.3f}]"
+                descr = f"[NLL={test_loss/n:6.4f}  ACC={test_acc/n:5.3f}]"
             else:
                 descr = f"[NLL={test_loss/n:6.4f}]"
             pbar.set_description(descr)

@@ -18,18 +18,6 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
             return jnp.sqrt(c) * vec
         elif model_type == 'classifier':
             # # Softmax cross-entropy Hessian = diag(p) - p p^T, PSD
-            # p = jax.nn.softmax(f_out)   # shape (K,)
-            # H_i = jnp.diag(p) - jnp.outer(p, p)  # shape (K,K)
-            # evals, evecs = jnp.linalg.eigh(H_i)  # evals >= 0
-            # sqrt_evals = jnp.sqrt(jnp.clip(evals, 0, jnp.inf))
-            # # transform to Q^T vec
-            # tmp = evecs.T @ vec
-            # # scale by sqrt_evals
-            # tmp = sqrt_evals * tmp
-            # # transform back
-            # res = evecs @ tmp
-            # # return res
-            # ! new
             # -------- L · vec  --------
             p = jax.nn.softmax(f_out)           # (K,)
             s = jnp.sqrt(p)                     # (K,)

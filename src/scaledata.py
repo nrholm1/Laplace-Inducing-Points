@@ -1,5 +1,7 @@
+import jax
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+import jax.numpy as jnp
 import numpy as np
 
 from src.data import JAXDataset, NumpyDataset, get_dataloaders as _get_dataloaders, jax_collate_fn, numpy_collate_fn
@@ -29,7 +31,7 @@ def load_mnist_numpy(train=True):
 
 
 
-def get_dataloaders(name, batch_size, num_workers=1):
+def get_dataloaders(name, batch_size, num_workers=0):
     if name == 'mnist':
         xtrain, ytrain = load_mnist_numpy(train=True)
         xtest, ytest = load_mnist_numpy(train=False)

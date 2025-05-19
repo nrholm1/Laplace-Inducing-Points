@@ -18,15 +18,13 @@ from src.train_map import train_map
 from src.train_inducing import train_inducing_points
 from src.utils import flatten_nn_params, load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
 
-
+# jax.config.update("jax_transfer_guard", "log")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", type=str, default="full_pipeline",
                         choices=["train_map", "train_inducing", "full_pipeline"],
                         help="Which phase(s) to run.")
-    parser.add_argument("--scalable", action="store_true",
-                        help="Whether to use scalable (matrix free) IP optimization.")
     parser.add_argument("--continue", action="store_true",
                         help="Continue training from checkpoint") # todo !!!
     parser.add_argument("--dataset", type=str, required=True,
@@ -57,7 +55,7 @@ def main():
     seed_map = map_cfg["seed"]
 
     # Initialize dataloaders
-    train_loader, test_loader = get_dataloaders(args.dataset, map_batch_size)
+    train_loader, test_loader = get_dataloaders(args.dataset, map_batch_size, num_workers=0)
     
     # Initialize model
     dummy_inp = next(iter(train_loader))[0][:1] # shape (1,28,28,1)
@@ -139,7 +137,7 @@ def main():
             alpha=alpha,
             num_steps=epochs_inducing,
             full_set_size=full_set_size,
-            scalable=args.scalable,
+            scalable=True,
         )
 
         # Save the inducing points (zinduc)

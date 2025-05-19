@@ -14,7 +14,7 @@ from seaborn import set_style
 set_style('darkgrid')
 
 from src.toymodels import SimpleRegressor, SimpleClassifier
-from src.data import JAXDataset, get_dataloaders
+from src.data import JAXDataset, NumpyDataset, get_dataloaders, jax_collate_fn, numpy_collate_fn
 from src.nplot import make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
 
 from src.train_map import train_map
@@ -198,7 +198,7 @@ def main():
 
     train_dataset = JAXDataset(xtrain, ytrain)
     test_dataset  = JAXDataset(xtest,  ytest)
-    train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, map_batch_size)
+    train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, map_batch_size, collate_fn=jax_collate_fn)
     # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
         map_model_state = train_map(
@@ -236,9 +236,9 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    train_loader_init, _ = get_dataloaders(train_dataset, test_dataset, m_inducing)
+    train_loader_init, _ = get_dataloaders(train_dataset, test_dataset, m_inducing, collate_fn=jax_collate_fn)
     zinit = next(iter(train_loader_init))[0]
-    train_loader_induc, _ = get_dataloaders(train_dataset, test_dataset, inducing_batch_size)
+    train_loader_induc, _ = get_dataloaders(train_dataset, test_dataset, inducing_batch_size, collate_fn=jax_collate_fn)
     
 
     if args.mode in ["train_inducing", "full_pipeline"]:
