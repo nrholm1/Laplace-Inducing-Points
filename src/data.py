@@ -50,7 +50,34 @@ def numpy_collate_fn(batch):
     return np.stack(xs), np.stack(ys)
 
 
-def get_dataloaders(train_dataset, test_dataset, batch_size, collate_fn=numpy_collate_fn):
-    train_loader = data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True)
-    test_loader = data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, drop_last=True)
+def get_dataloaders(train_dataset, test_dataset, batch_size, num_workers=1, collate_fn=numpy_collate_fn):
+    train_loader = data.DataLoader(train_dataset, 
+                                   batch_size=batch_size, 
+                                   shuffle=True, 
+                                   collate_fn=collate_fn,
+                                   num_workers=num_workers,
+                                   pin_memory=True,
+                                   drop_last=True)
+    test_loader = data.DataLoader(test_dataset, 
+                                  batch_size=batch_size, 
+                                  shuffle=False, 
+                                  collate_fn=collate_fn, 
+                                   num_workers=num_workers,
+                                   pin_memory=True,
+                                  drop_last=True)
     return train_loader, test_loader
+
+
+def prefetch(loader, size):
+    it = iter(loader)
+    buf = []
+    for _ in range(size):
+        try:
+            buf.append(jax.device_put(next(it)))
+        except StopIteration:
+            break
+    for batch in it:
+        yield buf.pop(0)
+        buf.append(jax.device_put(batch))
+    while buf:
+        yield buf.pop(0)
