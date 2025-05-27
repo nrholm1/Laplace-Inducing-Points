@@ -247,8 +247,8 @@ def main():
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     train_loader_init, _ = get_dataloaders(train_dataset, test_dataset, m_inducing, collate_fn=jax_collate_fn)
     zinit = next(iter(train_loader_init))[0]
+    # zinit = jax.random.normal(key=jax.random.PRNGKey(123), shape=zinit.shape)
     train_loader_induc, _ = get_dataloaders(train_dataset, test_dataset, inducing_batch_size, collate_fn=jax_collate_fn)
-    
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
@@ -314,7 +314,8 @@ def main():
         )
         # pdb.set_trace()
         plt.tight_layout()
-        plt.savefig(f"fig/{args.dataset}_{model_type}_lla.pdf")
+        suffix_if_matrixfree = '_mf' if args.scalable else ''
+        plt.savefig(f"fig/{args.dataset}_{model_type}_lla_{'full' if args.full else 'ip'}{suffix_if_matrixfree}.pdf")
         
         # ! LA vs LLA example plot!
         # make_predictive_mean_figure(map_model_state, xtrain, ytrain, alpha, num_mc_samples=args.num_mc_samples_lla)

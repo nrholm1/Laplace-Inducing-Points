@@ -9,7 +9,7 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
     flat_params, unravel_fn = flatten_nn_params(state.params['params'])
     M = Z.shape[0]
     N = full_set_size or M
-    recal_term = jnp.sqrt( N/M ) # ! what is the correct recalibration?
+    recal_term = jnp.sqrt( N/M )
     # recal_term = 1.
     
     def sqrt_Hi_apply_T(f_out, vec):

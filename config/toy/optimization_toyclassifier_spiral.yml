@@ -1,7 +1,7 @@
 alpha: 0.001
 map:
   batch_size: 64
-  epochs: 100
+  epochs: 500
   lr: 0.01
   seed: 127831678242
 ip:
@@ -11,7 +11,7 @@ ip:
   lr: 0.01
   mc_samples: 5
   seed: 4231553
-  st_samples: 512
-  slq_samples: 2
-  slq_num_matvecs: 16
+  st_samples: 256
+  slq_samples: 4
+  slq_num_matvecs: 32
   

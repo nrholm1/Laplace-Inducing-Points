@@ -164,7 +164,7 @@ def plot_lla_2D_classification(
         
     if plot_Z or plot_X: ax[0].legend(loc="lower right", framealpha=1.0)
     if plot_Z or plot_X: ax[1].legend(loc="lower right", framealpha=1.0)
-    pdb.set_trace()
+    # pdb.set_trace()
 
 
 def plot_map_2D_classification(fig, ax, map_model_state, tmin, tmax, colorbar=True):
