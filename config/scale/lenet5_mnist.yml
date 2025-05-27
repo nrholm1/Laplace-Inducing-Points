@@ -3,17 +3,21 @@ model:
   type: classifier
   seed: 123123123
 optimization:
-  alpha: 0.05
+  alpha: 0.005
   full_set_size: 60_000
   map:
-    batch_size: 128
+    batch_size: 256
     epochs_map: 50
     lr: 0.0005
     seed: 32132132
   ip:
-    m: 50
-    batch_size: 128
-    epochs: 100
+    m: 100
+    batch_size: 256
+    epochs: 101
     lr: 0.1
-    mc_samples: 1
+    mc_samples: 100
     seed: 280300
+    st_samples: 350
+    slq_samples: 4
+    slq_num_matvecs: 32
+sampling: todo

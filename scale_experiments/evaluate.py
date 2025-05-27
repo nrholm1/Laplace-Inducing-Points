@@ -4,6 +4,7 @@ import pdb
 import argparse, functools, pathlib, time
 
 import jax, jax.numpy as jnp
+from matplotlib import pyplot as plt
 import numpy as np
 from flax.training.train_state import TrainState
 import optax
@@ -15,6 +16,7 @@ from src.scalemodels import get_model
 from src.utils       import (load_yaml, load_checkpoint,
                              load_array_checkpoint, print_options,
                              print_summary)
+from src.nplot import plot_mnist
 
 # ---------------------------------------------------------------------
 def build_state(model_cfg, lr, dummy_input):
@@ -75,11 +77,11 @@ def eval_dataset(state, test_loader, Z, alpha,
                              num_mc_samples=num_mc_samples,
                              rng=sub)
 
+        pbar.set_description(f"[NLL {nll:.3f}] [ACC {acc:.3f}]")
         bs        = x_b.shape[0]
         tot_nll  += float(nll)  * bs
         tot_correct += float(acc) * bs
         tot_N    += bs
-        break
 
     return tot_nll / tot_N, tot_correct / tot_N
 
@@ -134,7 +136,11 @@ def main():
             name=induc_ckpt_name,
             step=epochs_inducing
         )
-
+    
+    # todo for debugging
+    plot_mnist(Z[:32].squeeze())
+    exit()
+    
     # --------------   evaluation   --------------------
     t0 = time.time()
     nll, acc = eval_dataset(state,

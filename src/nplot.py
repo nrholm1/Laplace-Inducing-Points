@@ -2,6 +2,7 @@
 Utility for making nice, homogenous plots.
 """
 
+import os
 import pdb
 import jax
 import jax.tree_util
@@ -11,6 +12,7 @@ from enum import Enum
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import numpy as np
 import seaborn as sns
 
 from src.lla import predict_la_samples_dense, predict_lla_dense, predict_lla_scalable
@@ -93,6 +95,7 @@ def plot_lla_2D_classification(
             full_set_size=N
         )
         logit_samples = logit_dist.sample(seed=key, sample_shape=(num_mc_samples,))
+        logit_samples = logit_samples.at[jnp.isnan(logit_samples)].set(0)
     
     prob_samples  = jax.nn.softmax(logit_samples, axis=-1)[:,:,0]
 
@@ -161,6 +164,7 @@ def plot_lla_2D_classification(
         
     if plot_Z or plot_X: ax[0].legend(loc="lower right", framealpha=1.0)
     if plot_Z or plot_X: ax[1].legend(loc="lower right", framealpha=1.0)
+    pdb.set_trace()
 
 
 def plot_map_2D_classification(fig, ax, map_model_state, tmin, tmax, colorbar=True):
@@ -369,3 +373,25 @@ def plot_cinterval(x, mu, sigma, color='orange', *args, zorder=1, text=None, **k
     )
     linep(x, mu - 2 * sigma,color=color,linestyle='--', zorder=zorder)
     linep(x, mu + 2 * sigma,color=color,linestyle='--', zorder=zorder)
+    
+def plot_mnist(batch, step=''):
+    """
+    Plot a batch of 32 MNIST digits (shape: [32, 28, 28]) 
+    and save to 'test.png'.
+    """
+    # convert JAX array to NumPy (for matplotlib)
+    imgs = np.array(batch)
+    assert imgs.shape == (32, 28, 28), f"Expected batch shape (32,28,28), got {batch.shape}"
+    
+    # create a 4x8 grid of subplots
+    fig, axes = plt.subplots(nrows=4, ncols=8, figsize=(8, 4),
+                             gridspec_kw={'wspace': 0.1, 'hspace': 0.1})
+    
+    # plot each image
+    for i, ax in enumerate(axes.flatten()):
+        ax.imshow(imgs[i], cmap='gray', interpolation='nearest')
+        ax.axis('off')
+    
+    # save to PDF
+    fig.savefig(f'fig/test/{step}.png', bbox_inches='tight', pad_inches=0)
+    plt.close(fig)

@@ -173,19 +173,28 @@ def main():
     opt_cfg = load_yaml(args.optimization_config)
     alpha = opt_cfg["alpha"]
     map_cfg = opt_cfg["map"]
-    inducing_cfg = opt_cfg["ip"]
 
     map_batch_size = map_cfg["batch_size"]
-    epochs_map = map_cfg["epochs_map"]
-    lr_map = map_cfg["lr_map"]
+    epochs_map = map_cfg["epochs"]
+    lr_map = map_cfg["lr"]
     seed_map = map_cfg["seed"]
 
-    m_inducing = inducing_cfg["m_induc"]
-    epochs_inducing = inducing_cfg["epochs_induc"]
-    inducing_batch_size = inducing_cfg["batch_size"]
-    lr_inducing = inducing_cfg["lr_induc"]
-    mc_samples = inducing_cfg["mc_samples"]
-    seed_inducing = inducing_cfg["seed"]
+    # m_inducing = inducing_cfg["m_induc"]
+    # epochs_inducing = inducing_cfg["epochs_induc"]
+    # inducing_batch_size = inducing_cfg["batch_size"]
+    # lr_inducing = inducing_cfg["lr_induc"]
+    # mc_samples = inducing_cfg["mc_samples"]
+    # seed_inducing = inducing_cfg["seed"]
+    ip_cfg = opt_cfg["ip"]
+    m_inducing = ip_cfg["m"]
+    epochs_inducing = ip_cfg["epochs"]
+    inducing_batch_size = ip_cfg["batch_size"]
+    lr_inducing = ip_cfg["lr"]
+    mc_samples = ip_cfg["mc_samples"]
+    seed_inducing = ip_cfg["seed"]
+    st_samples      = ip_cfg.get("st_samples", 256)
+    slq_samples     = ip_cfg.get("slq_samples", 4)
+    slq_num_matvecs = ip_cfg.get("slq_num_matvecs", 32)
 
     # Build train_state for MAP
     optimizer_map = optax.adam(lr_map)
@@ -256,7 +265,10 @@ def main():
             num_steps=epochs_inducing,
             full_set_size=xtrain.shape[0],
             scalable=args.scalable,
-            plot_full_dataset_fn_debug= lambda: plot_binary_classification_data(xtrain, ytrain)
+            plot_full_dataset_fn_debug= lambda: plot_binary_classification_data(xtrain, ytrain),
+            st_samples=st_samples,
+            slq_samples=slq_samples,
+            slq_num_matvecs=slq_num_matvecs,
         )
 
         # Save the inducing points (zinduc)
@@ -277,7 +289,7 @@ def main():
         )
 
     # =========== PART C: Visualization ===========
-    if args.mode in ["visualize", "train_inducing", "full_pipeline"]:
+    if args.mode in ["visualize", "full_pipeline"]:
         os.makedirs("fig", exist_ok=True)
         
         fig, ax = plt.subplots(1, 2, figsize=(13, 5))
@@ -300,6 +312,7 @@ def main():
             plot_Z=args.plot_Z,
             plot_X=args.plot_X,
         )
+        # pdb.set_trace()
         plt.tight_layout()
         plt.savefig(f"fig/{args.dataset}_{model_type}_lla.pdf")
         

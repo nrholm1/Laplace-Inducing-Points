@@ -50,7 +50,7 @@ def main():
 
     map_cfg = opt_cfg["map"]
     map_batch_size = map_cfg["batch_size"]
-    epochs_map = map_cfg["epochs_map"]
+    epochs_map = map_cfg["epochs"]
     lr_map = map_cfg["lr"]
     seed_map = map_cfg["seed"]
 
@@ -108,18 +108,24 @@ def main():
     del test_loader
 
     # =========== PART B: Inducing Points ===========
-    inducing_cfg = opt_cfg["ip"]
-    m_inducing = inducing_cfg["m"]
-    epochs_inducing = inducing_cfg["epochs"]
-    inducing_batch_size = inducing_cfg["batch_size"]
-    lr_inducing = inducing_cfg["lr"]
-    mc_samples = inducing_cfg["mc_samples"]
-    seed_inducing = inducing_cfg["seed"]
+    ip_cfg = opt_cfg["ip"]
+    m_inducing = ip_cfg["m"]
+    epochs_inducing = ip_cfg["epochs"]
+    inducing_batch_size = ip_cfg["batch_size"]
+    lr_inducing = ip_cfg["lr"]
+    mc_samples = ip_cfg["mc_samples"]
+    seed_inducing = ip_cfg["seed"]
+    st_samples = ip_cfg["st_samples"]
+    slq_samples = ip_cfg["slq_samples"]
+    slq_num_matvecs = ip_cfg["slq_num_matvecs"]
+    
     
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     train_loader_init, _ = get_dataloaders(args.dataset, m_inducing)
     zinit = next(iter(train_loader_init))[0]
+    zinit = jax.random.uniform(key=jax.random.PRNGKey(0), shape=zinit.shape)
+    # zinit = jax.random.normal(key=jax.random.PRNGKey(0), shape=zinit.shape)
     train_loader_induc, _ = get_dataloaders(args.dataset, inducing_batch_size)
     
 
@@ -138,6 +144,9 @@ def main():
             num_steps=epochs_inducing,
             full_set_size=full_set_size,
             scalable=True,
+            st_samples=st_samples,
+            slq_samples=slq_samples,
+            slq_num_matvecs=slq_num_matvecs,
         )
 
         # Save the inducing points (zinduc)

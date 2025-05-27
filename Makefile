@@ -35,13 +35,14 @@ clean:
 
 main = main.py
 scaletrain = scale_experiments/train.py
+scaleeval = scale_experiments/evaluate.py
 datamain = src/toydata.py
 
 DEVICE = cpu
 
-DATASET = banana
+DATASET = spiral
 MODEL = toyclassifier
-SCALE_DATASET = mnist
+SCALE_DATASET = fmnist
 SCALE_MODEL = lenet5
 
 
@@ -62,6 +63,11 @@ debug_run:
 
 train_scale:
 	$(PYTHON_INTERPRETER) $(scaletrain) $(mode) \
+		--dataset $(SCALE_DATASET) \
+		--config config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml \
+		$(EXTRA_ARGS)
+eval_scale:
+	$(PYTHON_INTERPRETER) $(scaleeval) $(mode) \
 		--dataset $(SCALE_DATASET) \
 		--config config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml \
 		$(EXTRA_ARGS)
@@ -87,7 +93,7 @@ svisualize:
 train_map_scale:
 	$(MAKE) train_scale mode=train_map
 train_ip_scale:
-	$(MAKE) train_scale "mode=train_inducing --scalable"
+	$(MAKE) train_scale mode=train_inducing
 
 
 # debug targets
