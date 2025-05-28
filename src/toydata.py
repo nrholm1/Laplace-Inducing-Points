@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from src.nplot import plot_regression_data, plot_binary_classification_data
+from src.data import JAXDataset, NumpyDataset, get_dataloaders as _get_dataloaders, jax_collate_fn, numpy_collate_fn
 
 
 """DATASETS"""
@@ -184,6 +185,32 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
     else:
         raise ValueError(f"Unknown dataset_name = {dataset_name}")
     return x, y
+
+
+def load_toydata(dataset):
+    datafile = f"data/{dataset}.npz"
+    if not os.path.exists(datafile):
+        raise FileNotFoundError(f"Data file not found: {datafile}")
+    data_npz = np.load(datafile)
+    x = jax.device_put(data_npz["x"])
+    y = jax.device_put(data_npz["y"])
+    n_samples = x.shape[0]
+
+    # Create train/test split
+    trainsplit = int(0.9 * n_samples)
+    xtrain, ytrain = x[:trainsplit], y[:trainsplit]
+    xtest,  ytest  = x[trainsplit:], y[trainsplit:]
+    return (xtrain,ytrain), (xtest,ytest)
+
+
+def get_dataloaders(dataset, batch_size):
+    (xtrain,ytrain), (xtest,ytest) = load_toydata(dataset)
+    
+    train_dataset = JAXDataset(xtrain, ytrain)
+    test_dataset  = JAXDataset(xtest,  ytest)
+    train_loader, test_loader = _get_dataloaders(train_dataset, test_dataset, batch_size, num_workers=0, collate_fn=jax_collate_fn)
+    
+    return train_loader, test_loader
 
 
 ################################################################################

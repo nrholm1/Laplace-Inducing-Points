@@ -2,6 +2,8 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 
+from src.toymodels import SimpleClassifier
+
 
 class LeNet5(nn.Module):
     """LeNet-5 for MNIST / Fashion-MNIST (~60 k parameters)."""
@@ -45,5 +47,14 @@ class LeNet5(nn.Module):
 
 
 def get_model(model_cfg):
-    if model_cfg['name'] == "LeNet5":
+    model_type = model_cfg['name']
+    
+    if model_type == "LeNet5":
         return LeNet5()
+    elif model_type == "classifier":
+        num_h = model_cfg["num_h"]
+        num_l = model_cfg["num_l"]
+        num_c = model_cfg.get("num_c", 2)
+        model_seed = model_cfg["seed"]
+        rng_model = jax.random.PRNGKey(model_seed)
+        return SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)

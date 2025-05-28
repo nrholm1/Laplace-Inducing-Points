@@ -1,5 +1,22 @@
-num_h: 32
-num_l: 2
-num_c: 2
-model_type: classifier
-rng_seed: 12345
+model:
+  num_h: 32
+  num_l: 2
+  num_c: 2
+  name: classifier
+  type: classifier
+  seed: 12345
+optimization:
+  full_set_size: 1000 # ! remember to set
+  alpha: 0.005
+  map:
+    batch_size: 32
+    epochs: 250
+    lr: 0.005
+    seed: 127831678241
+  ip:
+    m: 90
+    batch_size: 128
+    epochs: 200
+    lr: 0.01
+    mc_samples: 100
+    seed: 4231551

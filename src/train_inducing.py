@@ -4,12 +4,14 @@ import pdb
 # import pdb
 import jax
 import jax.numpy as jnp
+import jax.flatten_util
 from matplotlib import pyplot as plt
 import numpy as np
 import optax
 from tqdm import tqdm
 
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
+from src.matfree_monkeypatch import integrand_funm_sym_logdet
 
 from src.lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
 from src.ggn import compute_W_vps
@@ -101,6 +103,11 @@ def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
 
 def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set_size=None,
                                    st_samples=256, slq_samples=2, slq_num_matvecs=None):
+    """ MATRIX FREE
+    =========================================
+    Compute KL[ q(theta|Z) || p(theta|data) ]
+    =========================================
+    """
     N = full_set_size
     M = Z.shape[0]
     beta = N / M
@@ -117,7 +124,7 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         full_set_size=N)
     Sz_vp = compute_curvature_approx(
         state, Z, alpha=alpha, model_type=model_type, 
-        full_set_size=None)
+        full_set_size=N)
     W, WT = compute_W_vps(
         state, Z, model_type=model_type, 
         full_set_size=None)
@@ -174,14 +181,24 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     slq_num_matvecs = slq_num_matvecs if slq_num_matvecs is not None else int(M*0.8)
     def slq_logdet(Xfun):
         # adapted directly from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
-        problem = funm.integrand_funm_sym_logdet(tridiag_sym)
+        # tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
+        # problem = integrand_funm_sym_logdet(tridiag_sym)
+        bidiag_sym = decomp.bidiag(slq_num_matvecs)
+        problem = funm.integrand_funm_product_logdet(bidiag_sym)
         estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
         logdets = estimator(Xfun, key)
         return logdets
-    logdet_term = slq_logdet(Sz_vp)
+    # logdet_term = slq_logdet(Sz_vp)
     
-    return trace_term + logdet_term
+    sqrt_alpha = jnp.sqrt(alpha)
+    def bidiag_target(v):
+        x = WT(v)
+        xflat, unravel_fn = jax.flatten_util.ravel_pytree(x)
+        return jnp.concatenate([sqrt_alpha*v, xflat])#, unravel_fn
+    
+    logdet_term = slq_logdet(bidiag_target)
+    
+    return logdet_term + trace_term
 
 
 def alternative_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
@@ -200,7 +217,7 @@ def alternative_objective_dense(Z, X, state, alpha, model_type, key, full_set_si
     _, S_z_inv_logdet = jnp.linalg.slogdet(S_z_inv)
     logdet_term = - S_logdet - S_z_inv_logdet
     
-    return trace_term + logdet_term
+    return logdet_term + trace_term
 
 
 variational_grad_dense = jax.value_and_grad(alternative_objective_dense)
@@ -282,7 +299,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         x_sample,y_sample = dataset_sample
         
         # ! Common Random Numbers - does it work???
-        if step % 4 == 0:
+        if step % 2 == 0:
             rng = jax.random.fold_in(rng, step) # ? TEST holding probes constant
         
         z, opt_state, loss = optimize_step(

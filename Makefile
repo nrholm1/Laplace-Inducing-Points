@@ -35,7 +35,7 @@ clean:
 
 main = main.py
 scaletrain = scale_experiments/train.py
-scaleeval = scale_experiments/evaluate.py
+eval = scale_experiments/evaluate.py
 datamain = src/toydata.py
 
 DEVICE = cpu
@@ -67,9 +67,14 @@ train_scale:
 		--config config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml \
 		$(EXTRA_ARGS)
 eval_scale:
-	$(PYTHON_INTERPRETER) $(scaleeval) $(mode) \
+	$(PYTHON_INTERPRETER) $(eval) $(mode) \
 		--dataset $(SCALE_DATASET) \
 		--config config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml \
+		--scalable $(EXTRA_ARGS)
+eval:
+	$(PYTHON_INTERPRETER) $(eval) $(mode) \
+		--dataset $(DATASET) \
+		--config config/toy/$(MODEL)_$(DATASET).yml \
 		$(EXTRA_ARGS)
 
 # run targets
@@ -88,7 +93,7 @@ visualize:
 visualize_full:
 	$(MAKE) run mode=visualize EXTRA_ARGS=--full
 svisualize:
-	$(MAKE) run mode=visualize EXTRA_ARGS=--scalable
+	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs)"
 
 train_map_scale:
 	$(MAKE) train_scale mode=train_map

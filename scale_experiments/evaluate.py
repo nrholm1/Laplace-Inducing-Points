@@ -10,13 +10,14 @@ from flax.training.train_state import TrainState
 import optax
 from tqdm import tqdm
 
-from src.lla import predict_lla_scalable
+from src.lla import predict_lla_scalable, predict_lla_dense
 from src.scaledata   import get_dataloaders
 from src.scalemodels import get_model
 from src.utils       import (load_yaml, load_checkpoint,
                              load_array_checkpoint, print_options,
                              print_summary)
 from src.nplot import plot_mnist
+from src.toydata import get_dataloaders as get_toydataloaders, load_toydata
 
 # ---------------------------------------------------------------------
 def build_state(model_cfg, lr, dummy_input):
@@ -34,37 +35,52 @@ def build_state(model_cfg, lr, dummy_input):
 
 
 # ---------------------------  NLL utils  ------------------------------
-@functools.partial(jax.jit, static_argnames=("model_type", "num_mc_samples", "alpha", "full_set_size"))
+@functools.partial(jax.jit, static_argnames=("model_type", "num_mc_samples", "alpha", "full_set_size", "scalable"))
 def batch_nll(state, x, y, Z, *, alpha, full_set_size,
-              model_type, num_mc_samples, rng):
-    """Return (batch_nll, batch_correct)."""
+              model_type, num_mc_samples, rng, scalable=True):
+    """Return (batch_nll, batch_correct)."""    
 
-    logit_samples = predict_lla_scalable(
-        state, x,
-        Z,
-        model_type=model_type,
-        alpha=alpha,
-        full_set_size=full_set_size,
-        num_samples=num_mc_samples,
-        key=rng
-    )                                 # (S, B, C)
+    if scalable:
+        logit_samples = predict_lla_scalable(
+            state, x,
+            Z,
+            model_type=model_type,
+            alpha=alpha,
+            full_set_size=full_set_size,
+            num_samples=num_mc_samples,
+            key=rng
+        )                                 # (S, B, C)
+    else: 
+        logit_dist = predict_lla_dense(
+            state, x,
+            Z,
+            model_type=model_type,
+            alpha=alpha,
+            full_set_size=full_set_size,
+            num_samples=num_mc_samples,
+        )
+        logit_samples = logit_dist.sample()
+    
+    # logit_samples = state.apply_fn(state.params, x)[None] # ! MAP estimator sanity check
 
     probs = jax.nn.softmax(logit_samples, axis=-1)      # (S,B,C)
     mean  = probs.mean(axis=0)                          # (B,C)
 
     one_hot_y = jax.nn.one_hot(y.squeeze(), logit_samples.shape[-1])
     nll = jnp.mean(optax.softmax_cross_entropy(logit_samples, one_hot_y))
-    acc   = (mean.argmax(-1) == y).mean()
+    acc   = (mean.argmax(-1) == y.squeeze()).mean()
 
     # pdb.set_trace()
+    
     return nll, acc
 
 
 def eval_dataset(state, test_loader, Z, alpha,
-                 full_set_size, model_type, num_mc_samples):
+                 full_set_size, model_type, num_mc_samples,
+                 scalable=True):
 
     tot_nll, tot_correct, tot_N = 0.0, 0.0, 0
-    rng = jax.random.PRNGKey(42) # static key
+    rng = jax.random.PRNGKey(420) # static key
 
     pbar = tqdm(test_loader)
     for x_b, y_b in pbar:
@@ -75,7 +91,8 @@ def eval_dataset(state, test_loader, Z, alpha,
                              full_set_size=full_set_size,
                              model_type=model_type,
                              num_mc_samples=num_mc_samples,
-                             rng=sub)
+                             rng=sub,
+                             scalable=scalable)
 
         pbar.set_description(f"[NLL {nll:.3f}] [ACC {acc:.3f}]")
         bs        = x_b.shape[0]
@@ -97,6 +114,8 @@ def main():
                         help="Directory with the MAP checkpoint.")
     parser.add_argument("--ckpt_induc", default="checkpoint/ind/",
                         help="Directory with inducing-point checkpoint.")
+    parser.add_argument("--scalable", action="store_true",
+                        help="Whether to use scalable sampling for LLA.")
     args = parser.parse_args()
     print_options(args)
 
@@ -112,7 +131,10 @@ def main():
     batch_size     = map_cfg["batch_size"]
     lr_map         = map_cfg["lr"]
 
-    train_loader, test_loader = get_dataloaders(args.dataset, batch_size)
+    if args.dataset in ["spiral", "banana"]: # todo implement more toy datasets?
+        train_loader, test_loader = get_toydataloaders(args.dataset, batch_size)
+    else:
+        train_loader, test_loader = get_dataloaders(args.dataset, batch_size)
 
     # ---------------- model & MAP weights -------------
     dummy_input = next(iter(train_loader))[0][:1]          # (1,28,28,1)
@@ -138,14 +160,17 @@ def main():
         )
     
     # todo for debugging
-    plot_mnist(Z[:32].squeeze())
-    exit()
+    # plot_mnist(Z[:32].squeeze())
+    # exit()
+    (xtrain,_),_ = load_toydata(args.dataset)
+    print(xtrain.shape)
     
     # --------------   evaluation   --------------------
     t0 = time.time()
     nll, acc = eval_dataset(state,
                             test_loader,
                             Z,
+                            # xtrain,
                             alpha=alpha,
                             full_set_size=full_set_size,
                             model_type=model_cfg["type"],

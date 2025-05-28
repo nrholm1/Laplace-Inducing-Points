@@ -14,7 +14,7 @@ from seaborn import set_style
 set_style('darkgrid')
 
 from src.toymodels import SimpleRegressor, SimpleClassifier
-from src.data import JAXDataset, NumpyDataset, get_dataloaders, jax_collate_fn, numpy_collate_fn
+from src.toydata import get_dataloaders, load_toydata
 from src.nplot import make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
 
 from src.train_map import train_map
@@ -113,7 +113,7 @@ def main():
                         help="If selected, compute full LLA.")
     parser.add_argument("--scalable", action="store_true",
                         help="Whether to use scalable (matrix free) IP optimization and LLA sampling.")
-    parser.add_argument("--num_mc_samples_lla", type=int, default=500,
+    parser.add_argument("--num_mc_samples_lla", type=int, default=1000,
                         help="Number of MC samples for LLA predictive dist.")
     parser.add_argument("--plot_Z", action="store_true",
                         help="Whether to plot inducing points.")
@@ -133,29 +133,15 @@ def main():
 
     # Print selected options
     print_options(args)
-        
-    # Load data
-    datafile = f"data/{args.dataset}.npz"
-    if not os.path.exists(datafile):
-        raise FileNotFoundError(f"Data file not found: {datafile}")
-    data_npz = np.load(datafile)
-    x = jax.device_put(data_npz["x"])
-    y = jax.device_put(data_npz["y"])
-    n_samples = x.shape[0]
-    print(f"[INFO] Loaded dataset from {datafile} with {n_samples} samples.")
-
-    # Create train/test split
-    trainsplit = int(0.9 * n_samples)
-    xtrain, ytrain = x[:trainsplit], y[:trainsplit]
-    xtest,  ytest  = x[trainsplit:], y[trainsplit:]
-
+    
     # Load model config
-    model_cfg = load_yaml(args.model_config)
-    model_type = model_cfg.get("model_type", "regressor")  # 'regressor' or 'classifier'
+    cfg = load_yaml(args.model_config)
+    model_cfg = cfg['model']
+    model_type = model_cfg.get("name", "regressor")  # 'regressor' or 'classifier'
     num_h = model_cfg["num_h"]
     num_l = model_cfg["num_l"]
     num_c = model_cfg.get("num_c", 2) if model_type == "classifier" else 1
-    model_seed = model_cfg["rng_seed"]
+    model_seed = model_cfg["seed"]
 
     rng_model = jax.random.PRNGKey(model_seed)
     if model_type == "regressor":
@@ -163,14 +149,9 @@ def main():
     elif model_type == "classifier":
         model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
 
-    dummy_inp = jnp.ones((1, *xtrain[0].shape))
-    variables = model.init(rng_model, dummy_inp)
-
-    print("== Model Summary ==")
-    print_summary(variables)
-
     # Load optimization config (combined for MAP and inducing)
-    opt_cfg = load_yaml(args.optimization_config)
+    # opt_cfg = load_yaml(args.optimization_config)
+    opt_cfg = cfg['optimization']
     alpha = opt_cfg["alpha"]
     map_cfg = opt_cfg["map"]
 
@@ -178,13 +159,16 @@ def main():
     epochs_map = map_cfg["epochs"]
     lr_map = map_cfg["lr"]
     seed_map = map_cfg["seed"]
+    
+    # Load data
+    train_loader, test_loader = get_dataloaders(dataset=args.dataset, batch_size=map_batch_size)
+    
+    dummy_input = next(iter(train_loader))[0][:1]
+    variables = model.init(rng_model, dummy_input)
 
-    # m_inducing = inducing_cfg["m_induc"]
-    # epochs_inducing = inducing_cfg["epochs_induc"]
-    # inducing_batch_size = inducing_cfg["batch_size"]
-    # lr_inducing = inducing_cfg["lr_induc"]
-    # mc_samples = inducing_cfg["mc_samples"]
-    # seed_inducing = inducing_cfg["seed"]
+    print("== Model Summary ==")
+    print_summary(variables)
+
     ip_cfg = opt_cfg["ip"]
     m_inducing = ip_cfg["m"]
     epochs_inducing = ip_cfg["epochs"]
@@ -205,9 +189,6 @@ def main():
     )
     map_ckpt_prefix = f"map_{args.dataset}"
 
-    train_dataset = JAXDataset(xtrain, ytrain)
-    test_dataset  = JAXDataset(xtest,  ytest)
-    train_loader, test_loader = get_dataloaders(train_dataset, test_dataset, map_batch_size, collate_fn=jax_collate_fn)
     # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
         map_model_state = train_map(
@@ -226,8 +207,7 @@ def main():
         )
         
         plot_map(map_model_state, 
-                 (xtrain, ytrain), 
-                 (xtest, ytest), 
+                 *load_toydata(args.dataset), # get train/test data for plots
                  alpha, 
                  model_type=model_type, 
                  dataset_name=args.dataset)
@@ -245,10 +225,11 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    train_loader_init, _ = get_dataloaders(train_dataset, test_dataset, m_inducing, collate_fn=jax_collate_fn)
+    train_loader_init, _ = get_dataloaders(dataset=args.dataset, batch_size=m_inducing)
     zinit = next(iter(train_loader_init))[0]
+    # zinit = jax.random.uniform(minval=-1, maxval=1, key=jax.random.PRNGKey(123), shape=zinit.shape)
     # zinit = jax.random.normal(key=jax.random.PRNGKey(123), shape=zinit.shape)
-    train_loader_induc, _ = get_dataloaders(train_dataset, test_dataset, inducing_batch_size, collate_fn=jax_collate_fn)
+    train_loader_induc, _ = get_dataloaders(dataset=args.dataset, batch_size=inducing_batch_size)
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
@@ -263,9 +244,8 @@ def main():
             num_mc_samples=mc_samples,
             alpha=alpha,
             num_steps=epochs_inducing,
-            full_set_size=xtrain.shape[0],
+            full_set_size=opt_cfg['full_set_size'],
             scalable=args.scalable,
-            plot_full_dataset_fn_debug= lambda: plot_binary_classification_data(xtrain, ytrain),
             st_samples=st_samples,
             slq_samples=slq_samples,
             slq_num_matvecs=slq_num_matvecs,
@@ -295,9 +275,10 @@ def main():
         fig, ax = plt.subplots(1, 2, figsize=(13, 5))
         full_lla = args.full
         if full_lla:
-            plt.title(f"Full LLA / {xtrain.shape[0]} data points")
+            plt.title(f"Full LLA / {opt_cfg['full_set_size']} data points")
         else:
             plt.title(f"IP LLA / {m_inducing} inducing points, {epochs_inducing} steps")
+        (xtrain,ytrain),_ = load_toydata(args.dataset)
         plot_lla_2D_classification(
             fig,
             ax,
