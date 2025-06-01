@@ -76,6 +76,11 @@ eval:
 		--dataset $(DATASET) \
 		--config config/toy/$(MODEL)_$(DATASET).yml \
 		$(EXTRA_ARGS)
+seval:
+	$(PYTHON_INTERPRETER) $(eval) $(mode) \
+		--dataset $(DATASET) \
+		--config config/toy/$(MODEL)_$(DATASET).yml \
+		--scalable $(EXTRA_ARGS)
 
 # run targets
 train_map:

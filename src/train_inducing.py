@@ -150,7 +150,7 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     # WTW = jax.vmap(lambda e: 
     #         WT(W(e.reshape(inner_shape)))
     #     )(I_d).reshape(d,d)
-    WTW = build_WTW(W, WT, inner_shape, d, dtype=float, block=48) # ! build dense WTW in blocks to lower memory pressure
+    WTW = build_WTW(W, WT, inner_shape, d, dtype=float, block=2) # ! build dense WTW in blocks to lower memory pressure
     def Sz_inv_vp_woodbury_dense(v):
         u = WT(v).reshape(d)
         x   = jax.scipy.linalg.solve(
@@ -290,8 +290,8 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
     # z = jnp.clip(z, lb, ub)
     
     # ? for debugging
-    fig, ax = plt.subplots(figsize=(12, 8))
-    trajectory = [] 
+    # fig, ax = plt.subplots(figsize=(12, 8))
+    # trajectory = [] 
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
@@ -331,28 +331,28 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         # todo for debug: every 2 steps, record & plot
         if step % 4 == 0:
             z_np = np.asarray(z)
-            # plot_mnist(z_np[:32].squeeze(), step)
+            plot_mnist(z_np[:32].squeeze(), step)
             
-            trajectory.append(z_np)
+            # trajectory.append(z_np)
 
-            traj = np.stack(trajectory)    # shape (n_points, 2)
-            ax.clear()
-            ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
-            # plot_full_dataset_fn_debug()
-            ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
-            ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
-            ax.set_xlabel('z[0]')
-            ax.set_ylabel('z[1]')
-            ax.set_title(f'Latent Trajectory after {step} steps')
-            scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
-            plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
+            # traj = np.stack(trajectory)    # shape (n_points, 2)
+            # ax.clear()
+            # ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
+            # # plot_full_dataset_fn_debug()
+            # ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
+            # ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
+            # ax.set_xlabel('z[0]')
+            # ax.set_ylabel('z[1]')
+            # ax.set_title(f'Latent Trajectory after {step} steps')
+            # scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+            # plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
             
-            # force a draw
-            fig.canvas.draw()
-            fig.canvas.flush_events()
-            plt.savefig(f"fig/toy/test.png")
+            # # force a draw
+            # fig.canvas.draw()
+            # fig.canvas.flush_events()
+            # plt.savefig(f"fig/toy/test.png")
             
-            trajectory = trajectory[-3:]
+            # trajectory = trajectory[-3:]
         
     
     return z

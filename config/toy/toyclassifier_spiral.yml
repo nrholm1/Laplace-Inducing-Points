@@ -7,16 +7,19 @@ model:
   seed: 12345
 optimization:
   full_set_size: 1000 # ! remember to set
-  alpha: 0.005
+  alpha: 0.0009
   map:
-    batch_size: 32
-    epochs: 250
-    lr: 0.005
-    seed: 127831678241
-  ip:
-    m: 90
-    batch_size: 128
-    epochs: 200
+    batch_size: 64
+    epochs: 500
     lr: 0.01
-    mc_samples: 100
-    seed: 4231551
+    seed: 127831678242
+  ip:
+    m: 100
+    batch_size: 128
+    epochs: 50
+    lr: 0.008
+    mc_samples: 500
+    seed: 4231553
+    st_samples: 512
+    slq_samples: 1
+    slq_num_matvecs: 90
