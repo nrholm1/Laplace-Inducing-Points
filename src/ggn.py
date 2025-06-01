@@ -1,6 +1,7 @@
 import pdb
 import jax
 import jax.numpy as jnp
+from functools import partial
 
 from src.utils import flatten_nn_params
 
@@ -182,5 +183,38 @@ def compute_ggn_dense(state, Z, model_type, full_set_size=None):
     return GGN, flat_params, unravel_fn
     
     
+
+
+def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
+    """
+    Return WᵀW ∈ R^{dxd} with ≤ (block · #params) peak memory.
+    """
+    @partial(jax.remat, static_argnums=1)          # k is static
+    def col_block(start, k):
+        rows = start + jnp.arange(k, dtype=jnp.int32)        # shape (k,)
+        E    = jax.nn.one_hot(rows, d, dtype=dtype)\
+                  .reshape((k,) + inner_shape)               # (k, M, C)
+        cols = jax.vmap(lambda e: WT(W(e)).reshape(-1))(E)   # (k, d)
+        return cols.astype(dtype)                            # (k, d)
+
+    WTW = jnp.zeros((d, d), dtype=dtype)
+
+    n_full, tail = divmod(d, block)
+
+    def body(b, acc):
+        start = b * block
+        cols  = col_block(start, block)      # (block, d)
+        return jax.lax.dynamic_update_slice(acc, cols.T, (0, start))
+
+    WTW = jax.lax.fori_loop(0, n_full, body, WTW)
+
+    if tail:
+        start  = n_full * block
+        cols_t = col_block(start, tail).T    # (d, tail)
+        WTW    = jax.lax.dynamic_update_slice(WTW, cols_t, (0, start))
+
+    return jnp.triu(WTW) + jnp.triu(WTW, 1).T
+    
+
 def ensure_symmetry(M, jitter=1e-8):
     return 0.5 * (M + M.T) + jitter * jnp.eye(M.shape[0]) # ! enforce symmetry of a theoretically symmetric matrix for numerical stability

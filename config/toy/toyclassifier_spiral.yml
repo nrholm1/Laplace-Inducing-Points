@@ -22,4 +22,4 @@ optimization:
     seed: 4231553
     st_samples: 512
     slq_samples: 1
-    slq_num_matvecs: 90
+    slq_num_matvecs: 85

@@ -2,10 +2,13 @@ import pdb
 import jax
 import jax.numpy as jnp
 import jax.flatten_util
-from matfree import decomp
-from matfree.funm import funm_lanczos_sym, dense_funm_sym_eigh, funm_arnoldi
 
-from src.ggn import compute_W_vps
+from matfree import decomp
+from matfree.funm import funm_lanczos_sym#, dense_funm_sym_eigh, funm_arnoldi
+
+from src.matfree_monkeypatch import dense_funm_sym_eigh
+
+from src.ggn import compute_W_vps, build_WTW
 from src.utils import flatten_nn_params
 
 
@@ -68,47 +71,47 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
         x,info = jax.scipy.sparse.linalg.cg(A=composite_vp, b=v)
         return x
     
+    dummy = WTfun(jnp.zeros(D))
+    inner_shape = dummy.shape
+    d           = dummy.size
+    WTW = build_WTW(Wfun, WTfun, inner_shape, d, dtype=float, block=2) # ! build dense WTW in blocks to lower memory pressure
     def nullproj_vp(v): # verify: mult with GGN should output 0
-        return v - Wfun(composite_inv_vp(WTfun(v)))
+        u = WTfun(v)
+        uflat,unravel_fn = jax.flatten_util.ravel_pytree(u)
+        x = jax.scipy.linalg.solve(
+            WTW,
+            uflat
+        )
+        return v - Wfun(unravel_fn(x))
     
-    def composite_vp_b(i,v):
-        return WTfun_b(i, Wfun_b(i, v))
-    
-    def composite_inv_vp_b(i,v):
-        x,info = jax.scipy.sparse.linalg.cg(A=lambda v: composite_vp_b(i,v), b=v)
-        return x
-    
-    def nullproj_fun_b(i,v):
-        return v - Wfun_b(i, composite_inv_vp_b(i, WTfun_b(i,v)))
-    
-    # ? version that shuffles the minibatch order
-    def nullproj_approx_shuffled(v, key, steps):
+    def nullproj_approx(v, key, steps):
         def outer_body(step, state):
             v, key = state
             # generate a new permutation for each outer iteration
             key, subkey = jax.random.split(key)
             perm = jax.random.permutation(subkey, N)
+            
             # todo make batched, dense.
             def inner_body(i, v):
                 b = perm[i]
-                return nullproj_fun_b(b, v)
+                # return nullproj_fun_b(b, v)
+            
             v = jax.lax.fori_loop(0, N, inner_body, v)
             return (v, key)
         v, _ = jax.lax.fori_loop(0, steps, outer_body, (v, key))
         return v
     
     if key is not None:
-        nullproj_term = lambda v: 1/jnp.sqrt(alpha) * nullproj_approx_shuffled(v, key=key, steps=num_proj_steps) # Alternating projection stuff!
+        nullproj_term = lambda v: 1/jnp.sqrt(alpha) * nullproj_approx(v, key=key, steps=num_proj_steps) # Alternating projection stuff!
     else:
         nullproj_term = lambda v: 1/jnp.sqrt(alpha) * nullproj_vp(v) # direct projection!
     
     M = Z.shape[0]
     N = full_set_size or M
-    beta = N / M                    # todo remember to use beta!
+    beta = N / M
     
-    invsqrt_fun = dense_funm_sym_eigh(lambda x: 1.0/jnp.sqrt(x))
-    decomp_method = decomp.tridiag_sym(min(D,M))  # todo maybe set num_matvecs according to sample size - i.e. number of inducing points
-    # decomp_method = decomp.bidiag(min(D,M))  # todo maybe set num_matvecs according to sample size - i.e. number of inducing points
+    invsqrt_fun = dense_funm_sym_eigh(lambda x: 1.0/jnp.sqrt(x)) # ! using monkeypatched clipped version of dense_funm_sym_eigh!!
+    decomp_method = decomp.tridiag_sym(2*M)
     invmatsqrt = funm_lanczos_sym(invsqrt_fun, decomp_method)
 
     def invmatsqrt_term(V):
@@ -118,19 +121,21 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
             Umat = unravel_fn(Uflat)
             WTUmat = composite_vp(Umat)
             WTUmat_flat,_ = jax.flatten_util.ravel_pytree(WTUmat)
-            return alpha * Uflat + beta * WTUmat_flat
+            return alpha*Uflat + beta*WTUmat_flat
         result_flat = invmatsqrt(inner_fun_flat, Vflat)
         result = unravel_fn(result_flat)
         return result
     
     def outer_fun(v):
-        return Wfun(
-            composite_inv_vp(
-                invmatsqrt_term(
-                    WTfun(v)
-                )
-            )
+        u = invmatsqrt_term(
+            WTfun(v)
         )
+        uflat,unravel_fn = jax.flatten_util.ravel_pytree(u)
+        x = jax.scipy.linalg.solve(
+            WTW,
+            uflat
+        )
+        return Wfun(unravel_fn(x))
     
     @jax.jit
     def vp(v):

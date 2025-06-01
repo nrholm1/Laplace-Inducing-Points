@@ -1,5 +1,4 @@
 from functools import partial
-import functools
 import pdb
 # import pdb
 import jax
@@ -14,7 +13,7 @@ from matfree import decomp, funm, stochtrace as matfree_stochtrace
 from src.matfree_monkeypatch import integrand_funm_sym_logdet
 
 from src.lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
-from src.ggn import compute_W_vps
+from src.ggn import compute_W_vps, build_WTW
 from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params
 from src.toydata import plot_binary_classification_data
@@ -67,38 +66,6 @@ def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, f
     kl_term = var_kl_fun(q, alpha)
     reg_term = 0 # ! reg_coeff * (jnp.sum(jnp.square(x)) + jnp.sum(jnp.square(w)))
     return - (loglik_term - kl_term) + reg_term
-
-
-def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
-    """
-    Return WᵀW ∈ R^{dxd} with ≤ (block · #params) peak memory.
-    """
-    @functools.partial(jax.remat, static_argnums=1)          # k is static
-    def col_block(start, k):
-        rows = start + jnp.arange(k, dtype=jnp.int32)        # shape (k,)
-        E    = jax.nn.one_hot(rows, d, dtype=dtype)\
-                  .reshape((k,) + inner_shape)               # (k, M, C)
-        cols = jax.vmap(lambda e: WT(W(e)).reshape(-1))(E)   # (k, d)
-        return cols.astype(dtype)                            # (k, d)
-
-    WTW = jnp.zeros((d, d), dtype=dtype)
-
-    n_full, tail = divmod(d, block)
-
-    def body(b, acc):
-        start = b * block
-        cols  = col_block(start, block)      # (block, d)
-        return jax.lax.dynamic_update_slice(acc, cols.T, (0, start))
-
-    WTW = jax.lax.fori_loop(0, n_full, body, WTW)
-
-    if tail:
-        start  = n_full * block
-        cols_t = col_block(start, tail).T    # (d, tail)
-        WTW    = jax.lax.dynamic_update_slice(WTW, cols_t, (0, start))
-
-    return jnp.triu(WTW) + jnp.triu(WTW, 1).T
-
 
 
 def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set_size=None,
@@ -290,8 +257,8 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
     # z = jnp.clip(z, lb, ub)
     
     # ? for debugging
-    # fig, ax = plt.subplots(figsize=(12, 8))
-    # trajectory = [] 
+    fig, ax = plt.subplots(figsize=(12, 8))
+    trajectory = [] 
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
@@ -299,7 +266,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         x_sample,y_sample = dataset_sample
         
         # ! Common Random Numbers - does it work???
-        if step % 2 == 0:
+        if step % 4 == 0:
             rng = jax.random.fold_in(rng, step) # ? TEST holding probes constant
         
         z, opt_state, loss = optimize_step(
@@ -331,28 +298,28 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         # todo for debug: every 2 steps, record & plot
         if step % 4 == 0:
             z_np = np.asarray(z)
-            plot_mnist(z_np[:32].squeeze(), step)
+            # plot_mnist(z_np[:32].squeeze(), step)
             
-            # trajectory.append(z_np)
+            trajectory.append(z_np)
 
-            # traj = np.stack(trajectory)    # shape (n_points, 2)
-            # ax.clear()
-            # ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
-            # # plot_full_dataset_fn_debug()
-            # ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
-            # ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
-            # ax.set_xlabel('z[0]')
-            # ax.set_ylabel('z[1]')
-            # ax.set_title(f'Latent Trajectory after {step} steps')
-            # scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
-            # plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
+            traj = np.stack(trajectory)    # shape (n_points, 2)
+            ax.clear()
+            ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
+            # plot_full_dataset_fn_debug()
+            ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
+            ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
+            ax.set_xlabel('z[0]')
+            ax.set_ylabel('z[1]')
+            ax.set_title(f'Latent Trajectory after {step} steps')
+            scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+            plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
             
-            # # force a draw
-            # fig.canvas.draw()
-            # fig.canvas.flush_events()
-            # plt.savefig(f"fig/toy/test.png")
+            # force a draw
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+            plt.savefig(f"fig/toy/test.png")
             
-            # trajectory = trajectory[-3:]
+            trajectory = trajectory[-3:]
         
     
     return z

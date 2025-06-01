@@ -161,17 +161,17 @@ def main():
     # todo for debugging
     # plot_mnist(Z[:32].squeeze())
     # exit()
-    # (xtrain,_),_ = load_toydata(args.dataset)
+    (xtrain,_),_ = load_toydata(args.dataset)
     # print(xtrain.shape)
-    xload, _ = get_dataloaders(args.dataset, 100)
-    xtrain = next(iter(xload))[0]
+    # xload, _ = get_dataloaders(args.dataset, 100)
+    # xtrain = next(iter(xload))[0]
     
     # --------------   evaluation   --------------------
     t0 = time.time()
     nll, acc = eval_dataset(state,
                             test_loader,
-                            # Z,
-                            xtrain,
+                            Z,
+                            # xtrain,
                             alpha=alpha,
                             full_set_size=full_set_size,
                             model_type=model_cfg["type"],

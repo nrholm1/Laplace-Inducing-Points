@@ -99,6 +99,8 @@ visualize_full:
 	$(MAKE) run mode=visualize EXTRA_ARGS=--full
 svisualize:
 	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs)"
+svisualize_full:
+	$(MAKE) run mode=visualize EXTRA_ARGS="--full --scalable --num_mc_samples_lla $(mcs)"
 
 train_map_scale:
 	$(MAKE) train_scale mode=train_map
