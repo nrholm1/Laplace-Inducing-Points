@@ -110,30 +110,27 @@ def hutchpp(Xfun, sampler):
     
     return estimates
 
-def apply_X(Xfun, M):                  # M: (k, n) block of probe vectors
-    return jax.vmap(Xfun, in_axes=0, out_axes=1)(M)   # (k, n)
+def apply_X(Xfun, M):                  # M  (k, n)  rows = probes
+    return jax.vmap(Xfun, in_axes=0, out_axes=1)(M)
+
 
 # @partial(jax.jit, static_argnames=("Xfun", "s1", "s2"))
 def hutchpp_v2(Xfun, sampler):
-    eps     = sampler(...) # (n, 2*k)
-    k = eps.shape[0] // 2
-    S, G    = jnp.split(eps, (k,), axis=0)     # (k, n),  (k, n)
+    eps = sampler(...)          # (2k, n)   ← rows = probes
+    k   = eps.shape[0] // 2
+    S, G = jnp.split(eps, (k,), axis=0)   # (k, n), (k, n)
 
-    # pdb.set_trace()
+    # -- low-rank QR part --------------------------------------------------
+    Y   = apply_X(Xfun, S)                  # (n, k)
+    Q, _ = jnp.linalg.qr(Y, mode='reduced') # (n, k), orthonormal columns
 
-    Y       = apply_X(Xfun, S)                 # (n, k)
-    Q, _    = jnp.linalg.qr(Y, mode='reduced') # (n, k)
+    XQ     = jax.remat(apply_X, static_argnums=0)(Xfun, Q.T)  # (n, k)
+    low_rank = jnp.trace(XQ.T @ Q)            # tr(Qᵀ X Q)
 
-    low_rank = jnp.trace(
-        jax.remat(apply_X, static_argnums=0)(Xfun, Q.T).T @ Q # (n,k) x (k,n) => scalar
-    )
-
-    # *No* n×n projector; just deflate the probes.
-    G_perp  = G - (Q @ (G @ Q)).T
-
-    resid   = jnp.trace(
-        G_perp @ jax.remat(apply_X, static_argnums=0)(Xfun, G_perp)
-    ) / k
+    # -- residual Hutchinson part  ----------------------------------------
+    G_perp = G - (G @ Q) @ Q.T             # projector
+    XGp    = jax.remat(apply_X, static_argnums=0)(Xfun, G_perp)
+    resid  = jnp.trace(G_perp @ XGp) / k
 
     return low_rank + resid
 
