@@ -12,6 +12,7 @@ from tqdm import tqdm
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
 from src.matfree_monkeypatch import integrand_funm_sym_logdet
 
+from src.stochtrace import hutchpp, hutchpp_v2
 from src.lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
 from src.ggn import compute_W_vps, build_WTW
 from src.train_map import nl_likelihood_fun_regression
@@ -117,7 +118,7 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     # WTW = jax.vmap(lambda e: 
     #         WT(W(e.reshape(inner_shape)))
     #     )(I_d).reshape(d,d)
-    WTW = build_WTW(W, WT, inner_shape, d, dtype=float, block=2) # ! build dense WTW in blocks to lower memory pressure
+    WTW = build_WTW(W, WT, inner_shape, d, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
     def Sz_inv_vp_woodbury_dense(v):
         u = WT(v).reshape(d)
         x   = jax.scipy.linalg.solve(
@@ -137,12 +138,14 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     st_sampler =  lambda _: probes
     slq_sampler = lambda _: probes[:slq_samples]
     
-    def stoch_trace(Xfun):
-        integrand = matfree_stochtrace.integrand_trace()
-        estimator = matfree_stochtrace.estimator(integrand, sampler=st_sampler)
-        traces = estimator(Xfun, key)
-        return traces
-    trace_term = stoch_trace(composite_vp) 
+    # def stoch_trace(Xfun):
+    #     integrand = matfree_stochtrace.integrand_trace()
+    #     estimator = matfree_stochtrace.estimator(integrand, sampler=st_sampler)
+    #     traces = estimator(Xfun, key)
+    #     return traces
+    # stoch_trace = lambda vp: hutchpp(vp, st_sampler)
+    stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler)
+    trace_term = stoch_trace(composite_vp)
     
     # ! use stochastic Lanczos quadrature
     slq_num_matvecs = slq_num_matvecs if slq_num_matvecs is not None else int(M*0.8)
@@ -195,7 +198,7 @@ variational_grad_scalable = jax.value_and_grad(alternative_objective_scalable)
 def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, full_set_size=None, scalable=True,
                   st_samples=256, slq_samples=2, slq_num_matvecs=None):
     if scalable:
-        grad_fun = variational_grad_scalable  
+        grad_fun = variational_grad_scalable
         loss, grads = grad_fun(
             Z, 
             X, 
@@ -221,8 +224,8 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
             model_type=model_type, 
             full_set_size=full_set_size,
         )
-    updates, new_opt_state = zoptimizer.update(grads, opt_state)  # ? ADAM, SGD, etc.
-    # updates, new_opt_state = zoptimizer.update(grads, opt_state, Z) # ? ADAMW
+    # updates, new_opt_state = zoptimizer.update(grads, opt_state)  # ? ADAM, SGD, etc.
+    updates, new_opt_state = zoptimizer.update(grads, opt_state, Z) # ? ADAMW
     new_params = optax.apply_updates(Z, updates)
     return new_params, new_opt_state, loss
 
@@ -257,8 +260,8 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
     # z = jnp.clip(z, lb, ub)
     
     # ? for debugging
-    fig, ax = plt.subplots(figsize=(12, 8))
-    trajectory = [] 
+    # fig, ax = plt.subplots(figsize=(12, 8))
+    # trajectory = [] 
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
@@ -298,28 +301,28 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         # todo for debug: every 2 steps, record & plot
         if step % 4 == 0:
             z_np = np.asarray(z)
-            # plot_mnist(z_np[:32].squeeze(), step)
+            plot_mnist(z_np[:32].squeeze(), step)
             
-            trajectory.append(z_np)
+            # trajectory.append(z_np)
 
-            traj = np.stack(trajectory)    # shape (n_points, 2)
-            ax.clear()
-            ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
-            # plot_full_dataset_fn_debug()
-            ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
-            ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
-            ax.set_xlabel('z[0]')
-            ax.set_ylabel('z[1]')
-            ax.set_title(f'Latent Trajectory after {step} steps')
-            scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
-            plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
+            # traj = np.stack(trajectory)    # shape (n_points, 2)
+            # ax.clear()
+            # ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
+            # # plot_full_dataset_fn_debug()
+            # ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
+            # ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
+            # ax.set_xlabel('z[0]')
+            # ax.set_ylabel('z[1]')
+            # ax.set_title(f'Latent Trajectory after {step} steps')
+            # scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+            # plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
             
-            # force a draw
-            fig.canvas.draw()
-            fig.canvas.flush_events()
-            plt.savefig(f"fig/toy/test.png")
+            # # force a draw
+            # fig.canvas.draw()
+            # fig.canvas.flush_events()
+            # plt.savefig(f"fig/toy/test.png")
             
-            trajectory = trajectory[-3:]
+            # trajectory = trajectory[-3:]
         
     
     return z
