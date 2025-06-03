@@ -115,10 +115,10 @@ def apply_X(Xfun, M):                  # M  (k, n)  rows = probes
 
 
 # @partial(jax.jit, static_argnames=("Xfun", "s1", "s2"))
-def hutchpp_v2(Xfun, sampler):
+def hutchpp_v2(Xfun, sampler, *, s1, s2):
     eps = sampler(...)          # (2k, n)   ← rows = probes
-    k   = eps.shape[0] // 2
-    S, G = jnp.split(eps, (k,), axis=0)   # (k, n), (k, n)
+    # k   = eps.shape[0] // 2
+    S, G = jnp.split(eps, (s1,), axis=0)   # (k, n), (k, n)
 
     # -- low-rank QR part --------------------------------------------------
     Y   = apply_X(Xfun, S)                  # (n, k)
@@ -130,7 +130,7 @@ def hutchpp_v2(Xfun, sampler):
     # -- residual Hutchinson part  ----------------------------------------
     G_perp = G - (G @ Q) @ Q.T             # projector
     XGp    = jax.remat(apply_X, static_argnums=0)(Xfun, G_perp)
-    resid  = jnp.trace(G_perp @ XGp) / k
+    resid  = jnp.trace(G_perp @ XGp) / s2
 
     return low_rank + resid
 
