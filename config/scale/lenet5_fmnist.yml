@@ -1,23 +1,25 @@
 model:
-  name: LeNet5
-  type: classifier
-  seed: 123123123
+  name:                  LeNet5
+  type:                  classifier
+  seed:                  123123123
 optimization:
-  alpha: 0.01
-  full_set_size: 60_000
+  alpha:                 0.00005
+  full_set_size:         60_000
   map:
-    lr:         0.00025
-    seed:       32132132
-    batch_size: 256
-    epochs: 100
+    batch_size:          256
+    epochs:              50
+    lr:                  0.005
+    seed:                32132132
   ip:
-    m:               200
-    lr:              0.05
-    seed:            280300
-    epochs:          300
-    batch_size:      64
-    mc_samples:      20
-    st_samples:      128
-    slq_samples:     2
-    slq_num_matvecs: 128
-sampling: todo
+    m:                   200
+    lr:                  0.005
+    seed:                280300
+    epochs:              100
+    batch_size:          256
+    mc_samples:          200
+    st_samples:          300
+    slq_samples:         -1
+    slq_num_matvecs:     -1
+sampling:
+    mc_samples:          100
+    invsqrt_num_matvecs: 128

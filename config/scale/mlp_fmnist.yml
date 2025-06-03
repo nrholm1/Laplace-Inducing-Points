@@ -1,0 +1,26 @@
+model:
+  input_shape:        [28,28,1]
+  num_h:              [1024,512,256,128]
+  num_l:              4
+  num_c:              10
+  name:               large_classifier
+  type:               classifier
+  seed:               12345
+optimization:
+  full_set_size:      60_000 # ! remember to set
+  alpha:              10.0
+  map:
+    batch_size:       64
+    epochs:           50
+    lr:               0.0001
+    seed:             127831678242
+  ip:
+    m:                50
+    batch_size:       256
+    epochs:           0
+    lr:               0.008
+    mc_samples:       60
+    seed:             4231553
+    st_samples:       64
+    slq_samples:     -1
+    slq_num_matvecs: -1

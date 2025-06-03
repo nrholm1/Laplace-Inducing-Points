@@ -20,6 +20,6 @@ optimization:
     lr: 0.008
     mc_samples: 500
     seed: 4231553
-    st_samples: 512
-    slq_samples: 1
-    slq_num_matvecs: 85
+    st_samples: 8
+    slq_samples: 2
+    slq_num_matvecs: 80
