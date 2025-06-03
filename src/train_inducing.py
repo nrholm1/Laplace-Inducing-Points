@@ -111,6 +111,7 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         x,info = jax.scipy.sparse.linalg.cg(A=inner, b=u)
         return alpha_inv*v - alpha_inv**2*W(x)
     
+    # pdb.set_trace()
     dummy = WT(jnp.zeros(D))
     inner_shape = dummy.shape
     d           = dummy.size
@@ -144,29 +145,38 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     #     traces = estimator(Xfun, key)
     #     return traces
     # stoch_trace = lambda vp: hutchpp(vp, st_sampler)
-    stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler)
+    # stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler, s1=((st_samples * 3)//4), s2=((st_samples * 1)//4))
+    stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler, s1=st_samples-16, s2=16)
     trace_term = stoch_trace(composite_vp)
     
     # ! use stochastic Lanczos quadrature
-    slq_num_matvecs = slq_num_matvecs if slq_num_matvecs is not None else int(M*0.8)
-    def slq_logdet(Xfun):
-        # adapted directly from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        # tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
-        # problem = integrand_funm_sym_logdet(tridiag_sym)
-        bidiag_sym = decomp.bidiag(slq_num_matvecs)
-        problem = funm.integrand_funm_product_logdet(bidiag_sym)
-        estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
-        logdets = estimator(Xfun, key)
-        return logdets
-    # logdet_term = slq_logdet(Sz_vp)
+    # slq_num_matvecs = slq_num_matvecs if slq_num_matvecs is not None else int(M*0.8)
+    # def slq_logdet(Xfun):
+    #     # Adapted directly from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
+    #     # Old tridiagonal formulation:
+    #     # tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
+    #     # problem = integrand_funm_sym_logdet(tridiag_sym)
+        
+    #     # New bidiagonal reformulation:
+    #     bidiag_sym = decomp.bidiag(slq_num_matvecs)
+    #     problem = funm.integrand_funm_product_logdet(bidiag_sym)
+        
+    #     estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
+    #     estimate = partial(estimator, Xfun)
+    #     keys = jax.random.split(key, slq_samples)
+    #     logdets = jax.lax.map(jax.checkpoint(estimate),keys)
+    #     return logdets.mean()
+    # # logdet_term = slq_logdet(Sz_vp)
+                          
+    # sqrt_alpha = jnp.sqrt(alpha)
+    # def bidiag_target(v):
+    #     x, unravel_fn = jax.flatten_util.ravel_pytree(WT(v))
+    #     return jnp.concatenate([sqrt_alpha * v, x])
+
+    # logdet_term = slq_logdet(bidiag_target)
     
-    sqrt_alpha = jnp.sqrt(alpha)
-    def bidiag_target(v):
-        x = WT(v)
-        xflat, unravel_fn = jax.flatten_util.ravel_pytree(x)
-        return jnp.concatenate([sqrt_alpha*v, xflat])#, unravel_fn
-    
-    logdet_term = slq_logdet(bidiag_target)
+    _,logdet_WTW = jnp.linalg.slogdet(I_d + beta*alpha_inv*WTW)
+    logdet_term = logdet_WTW + D*jnp.log(alpha) # ! drop last term since it does not matter for optimization
     
     return logdet_term + trace_term
 
@@ -301,7 +311,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         # todo for debug: every 2 steps, record & plot
         if step % 4 == 0:
             z_np = np.asarray(z)
-            plot_mnist(z_np[:32].squeeze(), step)
+            plot_mnist(z_np[:32].squeeze(), step, name='fmnist')
             
             # trajectory.append(z_np)
 
