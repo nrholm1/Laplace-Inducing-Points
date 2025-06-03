@@ -27,11 +27,11 @@ def test_full_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     """
     X, y = regression_1d_data
     state = small_model_state
-    w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
     # Compute GGN using the provided function.
-    GGN, *_ = compute_ggn_dense(state, X, w, model_type="regressor")
+    GGN, *_ = compute_ggn_dense(state, X, model_type="regressor")
 
+    
     flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params)
 
     # Define the total negative log-likelihood over the dataset.
@@ -42,7 +42,7 @@ def test_full_ggn_vs_jax_hessian(regression_1d_data, small_model_state):
     
     # Compute the full Hessian via jax.hessian.
     full_hessian = jax.hessian(total_nll)(flat_params)
-    full_hessian = full_hessian[:GGN.shape[0], :GGN.shape[1]] # ! extract model param Hessian block matrix
+    full_hessian = full_hessian[1:, 1:] # ! extract model param Hessian block matrix
     
     # Compare the GGN with the full Hessian.
     # (Note: This equality holds in this fixed-variance linear scenario.)
@@ -60,10 +60,9 @@ def test_full_ggn_shape(regression_1d_data, small_model_state):
     """
     X, y = regression_1d_data
     state = small_model_state
-    w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
     # Call the updated compute_ggn with x, w, and y.
-    GGN, flat_params, unravel_fn = compute_ggn_dense(state, X, w, model_type="regressor")
+    GGN, flat_params, unravel_fn = compute_ggn_dense(state, X, model_type="regressor")
     assert GGN.shape[0] == GGN.shape[1], "GGN must be square"
     assert GGN.shape[0] == flat_params.shape[0], (
         f"GGN shape {GGN.shape} does not match #params {flat_params.shape}"
@@ -78,9 +77,8 @@ def test_full_ggn_pd(regression_1d_data, small_model_state):
     """
     X, y = regression_1d_data
     state = small_model_state    
-    w = jnp.array(1.) # jnp.ones((X.shape[0],))
 
-    GGN, *_ = compute_ggn_dense(state, X, w, model_type="regressor")
+    GGN, *_ = compute_ggn_dense(state, X, model_type="regressor")
 
     assert is_pd(GGN), "GGN is not positive definite!"
     
@@ -94,13 +92,12 @@ def test_ggnvp_I_vs_full_ggn(regression_1d_data, small_model_state):
     """
     X, y = regression_1d_data
     state = small_model_state    
-    w = jnp.array(1.) # jnp.ones((X.shape[0],))
     I = jnp.identity(2)
 
     
-    GGN_vp_fun = compute_ggn_vp(state, X, w, model_type="regressor")
+    GGN_vp_fun = compute_ggn_vp(state, X, model_type="regressor")
     mf_GGN = jax.vmap(GGN_vp_fun, in_axes=1, out_axes=1)(I) # Matrix Free GGN
-    full_GGN, *_ = compute_ggn_dense(state, X, w, model_type="regressor")
+    full_GGN, *_ = compute_ggn_dense(state, X, model_type="regressor")
     
     assert jnp.all(jnp.isclose(mf_GGN, full_GGN, atol=1e-8)), "GGNs don't match!"
     
@@ -120,16 +117,17 @@ def test_ggnvp_I_vs_full_ggn_classifier(classification_2d_data, classifier_state
     """
     X, y = classification_2d_data
     state = classifier_state    
-    w = jnp.array(1.)  # Global recalibration parameter
 
     # Obtain the dimension of the flattened parameter space.
     flat_params, _ = flatten_nn_params(state.params)
-    d = flat_params.shape[0]
-    I = jnp.eye(d)
+    D = flat_params.shape[0]
+    I = jnp.eye(D)
 
     # with jax.profiler.trace("/tmp/tensorboard"):
-    GGN_vp_fun = compute_ggn_vp(state, X, w, model_type="classifier") # Build the matrix–free GGN vector product oracle.    
+    GGN_vp_fun = compute_ggn_vp(state, X, model_type="classifier") # Build the matrix–free GGN vector product oracle.    
     mf_GGN = jax.vmap(GGN_vp_fun, in_axes=1, out_axes=1)(I) # apply the oracle to each column of I.
-    full_GGN, *_ = compute_ggn_dense(state, X, w, model_type="classifier")
+    full_GGN, *_ = compute_ggn_dense(state, X, model_type="classifier")
 
     assert jnp.all(jnp.isclose(mf_GGN, full_GGN, atol=1e-6)), "GGNs don't match for classifier!"
+    
+    

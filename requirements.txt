@@ -2,6 +2,7 @@ jax
 jaxlib
 flax
 optax
+matfree
 torch
 tensorflow-probability
 seaborn

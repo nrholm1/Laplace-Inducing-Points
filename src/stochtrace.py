@@ -1,4 +1,5 @@
 from functools import partial
+import pdb
 import jax
 import jax.numpy as jnp
 
@@ -76,6 +77,62 @@ def hutchpp_mvp(Xfun, D, seed, num_samples=10):
     estimates = jnp.trace(quad_term(Q)) + (1/num_samples) * jnp.trace(quad_term(orthproj@G.T))
     
     return estimates
+
+
+def hutchpp(Xfun, sampler):
+    """
+    Uses Hutch++ with linear operator oracle function.
+    - `Xfun`: oracle computing v -> X@v, where X: square matrix
+    """
+    
+    eps = sampler(...)
+    num_samples = eps.shape[0]
+    S,G = jnp.split(eps, 2, axis=0)
+    
+    Q,_ = jnp.linalg.qr(
+        jax.vmap(Xfun,in_axes=0,out_axes=1)(S),
+        mode='reduced'
+    )
+    orthproj = (jnp.eye(Q.shape[0]) - Q@Q.T) # symmetric
+    
+    # @jax.jit
+    def quad_term(M):
+        """
+        Compute M^T X M
+        as M.T@X@M = M.T@(X@M)
+        """
+        Y = jax.vmap(Xfun, in_axes=1, out_axes=1)(M)
+        # Y = Xfun(M)
+        return M.T @ Y
+    
+    # pdb.set_trace()
+    estimates = jnp.trace(quad_term(Q)) + (1/num_samples) * jnp.trace(quad_term(orthproj@G.T))
+    
+    return estimates
+
+def apply_X(Xfun, M):                  # M  (k, n)  rows = probes
+    return jax.vmap(Xfun, in_axes=0, out_axes=1)(M)
+
+
+# @partial(jax.jit, static_argnames=("Xfun", "s1", "s2"))
+def hutchpp_v2(Xfun, sampler, *, s1, s2):
+    eps = sampler(...)          # (2k, n)   ← rows = probes
+    # k   = eps.shape[0] // 2
+    S, G = jnp.split(eps, (s1,), axis=0)   # (k, n), (k, n)
+
+    # -- low-rank QR part --------------------------------------------------
+    Y   = apply_X(Xfun, S)                  # (n, k)
+    Q, _ = jnp.linalg.qr(Y, mode='reduced') # (n, k), orthonormal columns
+
+    XQ     = jax.remat(apply_X, static_argnums=0)(Xfun, Q.T)  # (n, k)
+    low_rank = jnp.trace(XQ.T @ Q)            # tr(Qᵀ X Q)
+
+    # -- residual Hutchinson part  ----------------------------------------
+    G_perp = G - (G @ Q) @ Q.T             # projector
+    XGp    = jax.remat(apply_X, static_argnums=0)(Xfun, G_perp)
+    resid  = jnp.trace(G_perp @ XGp) / s2
+
+    return low_rank + resid
 
 
 def hutchpp_inv_mvp(Xfun, D, seed, num_samples=10):

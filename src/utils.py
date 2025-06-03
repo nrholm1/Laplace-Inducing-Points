@@ -88,3 +88,9 @@ def print_summary(params):
     num_model_params = count_model_params(params)    
     print(f"Param count     (D) : {num_model_params}")
     print(f"Cov. mat. size (D^2): {num_model_params**2:.3e}")
+    
+    
+def print_options(args):
+    print('# Options')
+    for key, value in sorted(vars(args).items()):
+        print(key, '=', value)

@@ -5,3 +5,7 @@ fig/*
 *.log
 .vscode
 .DS_Store
+data/*
+trace/*
+*.out
+job_*

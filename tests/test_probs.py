@@ -18,7 +18,7 @@ def test_nl_likelihood_fun(regression_1d_data, small_model_state):
     # Set known parameters
     state.params['params']["W"] = 2.0
     state.params['params']["b"] = 0.0
-    state.params['params']["logvar"] = 2.3
+    state.params['logvar']["logvar"] = 2.3
 
     nll_fun_val = nl_likelihood_fun_regression(state.apply_fn, state.params, regression_1d_data)
 
@@ -44,7 +44,7 @@ def test_nl_prior_fun(small_model_state):
     # Set known parameters, e.g., W = 2, b = 0, logvar = 0.
     state.params['params']["W"] = 2.0
     state.params['params']["b"] = 0.0
-    state.params['params']["logvar"] = 0.0
+    state.params['logvar']["logvar"] = 0.0
     
     stdev = 2.3
 
@@ -63,13 +63,13 @@ def test_nl_posterior_fun(regression_1d_data, small_model_state):
     # Set known parameters.
     state.params['params']["W"] = 2.0
     state.params['params']["b"] = 0.0
-    state.params['params']["logvar"] = 0.0
+    state.params['logvar']["logvar"] = 0.0
     
     stdev = 2.3
 
     nll_val = nl_likelihood_fun_regression(state.apply_fn, state.params, regression_1d_data)
     prior_val = nl_prior_fun(state.params, stdev=stdev) # todo what should stdev be?
-    posterior_val = nl_posterior_fun_regression(state, state.params, regression_1d_data, prior_std=stdev)
+    posterior_val = nl_posterior_fun_regression(state, state.params, regression_1d_data, prior_precision=1.0/stdev**2)
     
     np.testing.assert_allclose(posterior_val, nll_val + prior_val, rtol=1e-4, atol=1e-6)
 
@@ -89,9 +89,9 @@ def test_learned_variance_effect(regression_1d_data, small_model_state):
     state.params['params']["b"] = 0.0
 
     # Compute nll for two different logvar values.
-    state.params['params']["logvar"] = -1.0  # variance = exp(-1) ~ 0.37
+    state.params['logvar']["logvar"] = -1.0  # variance = exp(-1) ~ 0.37
     nll_low = nl_likelihood_fun_regression(state.apply_fn, state.params, regression_1d_data)
-    state.params['params']["logvar"] = 1.0   # variance = exp(1) ~ 2.72
+    state.params['logvar']["logvar"] = 1.0   # variance = exp(1) ~ 2.72
     nll_high = nl_likelihood_fun_regression(state.apply_fn, state.params, regression_1d_data)
 
     # They should be different. (You could further manually compute the expected change,
