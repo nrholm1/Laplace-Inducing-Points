@@ -1,3 +1,4 @@
+import pdb
 import jax
 import jax.numpy as jnp
 from flax import linen as nn
@@ -46,15 +47,37 @@ class LeNet5(nn.Module):
         return x
 
 
-def get_model(model_cfg):
-    model_type = model_cfg['name']
+class LargeClassifier(nn.Module):
+    input_shape: tuple # shape of a single input
+    numh: list # list of number of hidden units per layer
+    numl: int # number of layers
+    numc: int # number of classes
     
-    if model_type == "LeNet5":
+    @nn.compact
+    def __call__(self, X):
+        if X.shape == self.input_shape:
+            X = X.reshape(-1)
+        else:
+            X = X.reshape(X.shape[0], -1)
+        for j in range(self.numl):
+            X = nn.tanh(nn.Dense(features=self.numh[j])(X))
+        logits = nn.Dense(features=self.numc)(X)
+        return logits
+
+
+def get_model(model_cfg):
+    model_name = model_cfg['name']
+    
+    if model_name == "LeNet5":
         return LeNet5()
-    elif model_type == "classifier":
+    elif model_name == "large_classifier":
+        input_shape = tuple(model_cfg["input_shape"])
         num_h = model_cfg["num_h"]
         num_l = model_cfg["num_l"]
-        num_c = model_cfg.get("num_c", 2)
-        model_seed = model_cfg["seed"]
-        rng_model = jax.random.PRNGKey(model_seed)
+        num_c = model_cfg.get("num_c")
+        return LargeClassifier(input_shape=input_shape, numh=num_h, numl=num_l, numc=num_c)
+    elif model_name == "classifier":
+        num_h = model_cfg["num_h"]
+        num_l = model_cfg["num_l"]
+        num_c = model_cfg.get("num_c")
         return SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)

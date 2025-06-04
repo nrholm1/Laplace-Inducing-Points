@@ -124,7 +124,7 @@ def main():
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     train_loader_init, _ = get_dataloaders(args.dataset, m_inducing)
     zinit = next(iter(train_loader_init))[0]
-    zinit = jax.random.uniform(key=jax.random.PRNGKey(0), shape=zinit.shape)
+    # zinit = jax.random.uniform(key=jax.random.PRNGKey(0), shape=zinit.shape)
     # zinit = jax.random.normal(key=jax.random.PRNGKey(0), shape=zinit.shape)
     train_loader_induc, _ = get_dataloaders(args.dataset, inducing_batch_size)
     

@@ -74,7 +74,7 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
     dummy = WTfun(jnp.zeros(D))
     inner_shape = dummy.shape
     d           = dummy.size
-    WTW = build_WTW(Wfun, WTfun, inner_shape, d, dtype=float, block=2) # ! build dense WTW in blocks to lower memory pressure
+    WTW = build_WTW(Wfun, WTfun, inner_shape, d, dtype=float, block=2)
     def nullproj_vp(v): # verify: mult with GGN should output 0
         u = WTfun(v)
         uflat,unravel_fn = jax.flatten_util.ravel_pytree(u)
@@ -118,8 +118,9 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
         """Note: matfree expects 1D input, so we wrap the operation in flatten/unflatten."""
         Vflat, unravel_fn = jax.flatten_util.ravel_pytree(V)
         def inner_fun_flat(Uflat):
-            Umat = unravel_fn(Uflat)
-            WTUmat = composite_vp(Umat)
+            # Umat = unravel_fn(Uflat)
+            # WTUmat = composite_vp(Umat)
+            WTUmat = WTW@Uflat
             WTUmat_flat,_ = jax.flatten_util.ravel_pytree(WTUmat)
             return alpha*Uflat + beta*WTUmat_flat
         result_flat = invmatsqrt(inner_fun_flat, Vflat)
@@ -150,7 +151,8 @@ def sample(state, Z, D, alpha, key, model_type, num_samples=1, full_set_size=Non
     Eps = jax.random.normal(sample_key, shape=(num_samples, D))
     inv_matsqrt_fun = inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=full_set_size, key=altproj_key, num_proj_steps=num_proj_steps)
     # flat_params, unravel_fn = flatten_nn_params(state.params['params']) # todo could potentially make it s.t. we reuse MAP by passing flat params to inv_sqrtm
-    samples = jax.vmap(inv_matsqrt_fun, in_axes=(0,))(Eps) # + flat_params
+    # samples = jax.vmap(inv_matsqrt_fun, in_axes=(0,))(Eps) #+ flat_params
+    samples = jax.lax.map(inv_matsqrt_fun, Eps)
     return samples
 
 
