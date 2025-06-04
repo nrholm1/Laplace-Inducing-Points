@@ -16,7 +16,7 @@ from src.scalemodels import get_model
 from src.utils       import (load_yaml, load_checkpoint,
                              load_array_checkpoint, print_options,
                              print_summary)
-from src.nplot import plot_mnist
+from src.nplot import plot_grayscale
 from src.toydata import get_dataloaders as get_toydataloaders, load_toydata
 
 # ---------------------------------------------------------------------

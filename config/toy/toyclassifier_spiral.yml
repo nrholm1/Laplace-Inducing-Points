@@ -14,12 +14,12 @@ optimization:
     lr: 0.01
     seed: 127831678242
   ip:
-    m: 100
+    m: 50
     batch_size: 128
-    epochs: 50
+    epochs: 500
     lr: 0.008
     mc_samples: 500
     seed: 4231553
-    st_samples: 8
+    st_samples: 512
     slq_samples: 2
     slq_num_matvecs: 80

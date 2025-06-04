@@ -26,7 +26,7 @@ def main():
                         choices=["train_map", "train_inducing", "full_pipeline"],
                         help="Which phase(s) to run.")
     parser.add_argument("--continue", action="store_true",
-                        help="Continue training from checkpoint") # todo !!!
+                        help="Continue training from checkpoint") # todo !!! (might not be needed)
     parser.add_argument("--dataset", type=str, required=True,
                         help="Dataset name.")
     parser.add_argument("--config", type=str, required=True,
@@ -43,16 +43,16 @@ def main():
     # Get configs
     cfg = load_yaml(args.config)
     model_cfg = cfg['model']
-    opt_cfg = cfg['optimization']
+    opt_cfg   = cfg['optimization']
 
-    alpha = opt_cfg["alpha"]
+    alpha         = opt_cfg["alpha"]
     full_set_size = opt_cfg['full_set_size'] # full dataset size
 
-    map_cfg = opt_cfg["map"]
+    map_cfg        = opt_cfg["map"]
     map_batch_size = map_cfg["batch_size"]
-    epochs_map = map_cfg["epochs"]
-    lr_map = map_cfg["lr"]
-    seed_map = map_cfg["seed"]
+    epochs_map     = map_cfg["epochs"]
+    lr_map         = map_cfg["lr"]
+    seed_map       = map_cfg["seed"]
 
     # Initialize dataloaders
     train_loader, test_loader = get_dataloaders(args.dataset, map_batch_size, num_workers=0)
@@ -108,24 +108,22 @@ def main():
     del test_loader
 
     # =========== PART B: Inducing Points ===========
-    ip_cfg = opt_cfg["ip"]
-    m_inducing = ip_cfg["m"]
-    epochs_inducing = ip_cfg["epochs"]
+    ip_cfg              = opt_cfg["ip"]
+    m_inducing          = ip_cfg["m"]
+    epochs_inducing     = ip_cfg["epochs"]
     inducing_batch_size = ip_cfg["batch_size"]
-    lr_inducing = ip_cfg["lr"]
-    mc_samples = ip_cfg["mc_samples"]
-    seed_inducing = ip_cfg["seed"]
-    st_samples = ip_cfg["st_samples"]
-    slq_samples = ip_cfg["slq_samples"]
-    slq_num_matvecs = ip_cfg["slq_num_matvecs"]
+    lr_inducing         = ip_cfg["lr"]
+    mc_samples          = ip_cfg["mc_samples"]
+    seed_inducing       = ip_cfg["seed"]
+    st_samples          = ip_cfg["st_samples"]
+    slq_samples         = ip_cfg["slq_samples"]
+    slq_num_matvecs     = ip_cfg["slq_num_matvecs"]
     
     
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     train_loader_init, _ = get_dataloaders(args.dataset, m_inducing)
-    zinit = next(iter(train_loader_init))[0]
-    # zinit = jax.random.uniform(key=jax.random.PRNGKey(0), shape=zinit.shape)
-    # zinit = jax.random.normal(key=jax.random.PRNGKey(0), shape=zinit.shape)
+    zinit = next(iter(train_loader_init))[0] # Init IP from training data sample
     train_loader_induc, _ = get_dataloaders(args.dataset, inducing_batch_size)
     
 
@@ -144,6 +142,7 @@ def main():
             num_steps=epochs_inducing,
             full_set_size=full_set_size,
             scalable=True,
+            plot_type=args.dataset,
             st_samples=st_samples,
             slq_samples=slq_samples,
             slq_num_matvecs=slq_num_matvecs,

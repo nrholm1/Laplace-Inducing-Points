@@ -87,11 +87,14 @@ def test_hutchpp_mvp(matrix_test_suite):
     tr3_exact  = jnp.trace(M3)
     # assert jnp.isclose(tr3_approx, tr3_exact, rtol=1e-2), f"Error for M3. True:{tr3_exact:.2f}, Approx.:{tr3_approx:.2f}"
     
-    eps = jax.random.rademacher(key=seed, shape=(1000,M3.shape[0]))
+    k = 3200
+    eps = jax.random.rademacher(key=seed, shape=(k, M3.shape[0]))
+    s2 = 32
+    s1 = k - s2
     st_sampler = lambda _: eps
-    stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler)
+    stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler, s1=s1, s2=s2)
     trace_term = stoch_trace(M3fun)
-    pass
+    assert jnp.isclose(trace_term, tr3_exact, rtol=1e-8), f"Error for M3. True:{tr3_exact:.2f}, Approx.:{trace_term:.2f}"
 
 
 

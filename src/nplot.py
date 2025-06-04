@@ -374,7 +374,7 @@ def plot_cinterval(x, mu, sigma, color='orange', *args, zorder=1, text=None, **k
     linep(x, mu - 2 * sigma,color=color,linestyle='--', zorder=zorder)
     linep(x, mu + 2 * sigma,color=color,linestyle='--', zorder=zorder)
     
-def plot_mnist(batch, step='', name=''):
+def plot_grayscale(batch, step='', name=''):
     """
     Plot a batch of 32 MNIST digits (shape: [32, 28, 28]) 
     and save to 'test.png'.

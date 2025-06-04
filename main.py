@@ -246,6 +246,7 @@ def main():
             num_steps=epochs_inducing,
             full_set_size=opt_cfg['full_set_size'],
             scalable=args.scalable,
+            plot_type=args.dataset,
             st_samples=st_samples,
             slq_samples=slq_samples,
             slq_num_matvecs=slq_num_matvecs,

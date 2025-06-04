@@ -19,7 +19,7 @@ from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params
 from src.toydata import plot_binary_classification_data
 from src.data import make_iter
-from src.nplot import scatterp, plot_mnist
+from src.nplot import scatterp, plot_grayscale
 
 
 def sample_params(mu, cov, rng, num_samples=1):
@@ -240,7 +240,7 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
     return new_params, new_opt_state, loss
 
 
-def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, scalable, plot_full_dataset_fn_debug=None,
+def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, scalable, plot_type=None,
                           st_samples=256, slq_samples=2, slq_num_matvecs=None):
     z = zinit
     opt_state = zoptimizer.init(z)
@@ -261,17 +261,13 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         sample = (jnp.concatenate(sample[0], axis=0), jnp.concatenate(sample[1], axis=0))
         return sample
     
-    # ! bounding box for constraining inducing point range
-    dataset_sample = get_next_sample(num_batches=32)[0]
-    lb = dataset_sample.min(axis=0)
-    ub = dataset_sample.max(axis=0)
-    # z = z*dataset_sample.std() + dataset_sample.mean()
-    del dataset_sample
-    # z = jnp.clip(z, lb, ub)
-    
-    # ? for debugging
-    # fig, ax = plt.subplots(figsize=(12, 8))
-    # trajectory = [] 
+    if plot_type in ['spiral', 'xor', 'banana']:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        trajectory = [] 
+        dataset_sample = get_next_sample(num_batches=32)[0]
+        lb = dataset_sample.min(axis=0)
+        ub = dataset_sample.max(axis=0)
+        del dataset_sample
     
     pbar = tqdm(range(num_steps))
     for step in pbar:
@@ -279,8 +275,8 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         x_sample,y_sample = dataset_sample
         
         # ! Common Random Numbers - does it work???
-        if step % 4 == 0:
-            rng = jax.random.fold_in(rng, step) # ? TEST holding probes constant
+        # if step % 4 == 0:
+        #     rng = jax.random.fold_in(rng, step) # ? TEST holding probes constant
         
         z, opt_state, loss = optimize_step(
             z, 
@@ -291,48 +287,43 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             rng=rng,
             model_type=model_type,
             zoptimizer=zoptimizer, 
-            num_mc_samples=num_mc_samples, 
+            num_mc_samples=num_mc_samples,
             full_set_size=full_set_size,
             scalable=scalable,
             st_samples=st_samples, 
             slq_samples=slq_samples, 
             slq_num_matvecs=slq_num_matvecs
         )
-        # pdb.set_trace()
-        # ! Enforce constraints on z
-        # z = jnp.clip(z,0,1)
-        # z = jnp.clip(z, 
-        #              lb*(1 - 0.5*jnp.sign(lb)),
-        #              ub*(1 + 0.5*jnp.sign(ub))
-        #     )
         
         pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
         
         # todo for debug: every 2 steps, record & plot
-        if step % 4 == 0:
+        if (plot_type is not None) and (step % 4 == 0):
             z_np = np.asarray(z)
-            plot_mnist(z_np[:32].squeeze(), step, name='fmnist')
             
-            # trajectory.append(z_np)
+            if plot_type in ['mnist', 'fmnist']:
+                plot_grayscale(z_np[:32].squeeze(), step, name=plot_type)
+            
+            elif plot_type in ['spiral', 'xor', 'banana']:
+                trajectory.append(z_np)
 
-            # traj = np.stack(trajectory)    # shape (n_points, 2)
-            # ax.clear()
-            # ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
-            # # plot_full_dataset_fn_debug()
-            # ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
-            # ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
-            # ax.set_xlabel('z[0]')
-            # ax.set_ylabel('z[1]')
-            # ax.set_title(f'Latent Trajectory after {step} steps')
-            # scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
-            # plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
-            
-            # # force a draw
-            # fig.canvas.draw()
-            # fig.canvas.flush_events()
-            # plt.savefig(f"fig/toy/test.png")
-            
-            # trajectory = trajectory[-3:]
+                traj = np.stack(trajectory)    # shape (n_points, 2)
+                ax.clear()
+                ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
+                ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
+                ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
+                ax.set_xlabel('z[0]')
+                ax.set_ylabel('z[1]')
+                ax.set_title(f'Inducing Point Trajectory after {step} steps')
+                scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+                plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
+                
+                # force a draw
+                fig.canvas.draw()
+                fig.canvas.flush_events()
+                plt.savefig(f"fig/toy/ips.png")
+                
+                trajectory = trajectory[-3:]
         
     
     return z
