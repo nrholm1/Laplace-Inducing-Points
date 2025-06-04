@@ -149,7 +149,7 @@ def classification_2d_data():
 @pytest.fixture
 def classifier_state():
     # Load the YAML configuration file.
-    config_path = "config/toyclassifier_xor.yml"
+    config_path = "config/toy/toyclassifier_xor.yml"
     config = load_yaml(config_path)
     
     # Extract configuration parameters.

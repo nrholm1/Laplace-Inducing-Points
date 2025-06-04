@@ -10,7 +10,7 @@ from matfree.funm import funm_lanczos_sym, dense_funm_sym_eigh, funm_arnoldi
 
 from src.lla import posterior_lla_dense, compute_curvature_approx_dense, predict_lla_dense, predict_lla_scalable
 from src.sample import sample, inv_matsqrt_vp, sample_both, sample_dense, inv_matsqrt_dense
-from src.ggn import compute_ggn_dense, compute_W_vps
+from src.ggn import compute_ggn_dense, compute_W_vps, build_WTW
 from src.utils import flatten_nn_params, is_pd
 from fixtures import regression_1d_data, small_model_state, classifier_state, classification_2d_data, sine_data, toyregressor_state
 
@@ -88,6 +88,21 @@ def test_WT_W_vps_2(classification_2d_data, classifier_state):
     
     composite_GGN = jax.vmap(composite_vp, in_axes=0)(I)
     assert jnp.all(jnp.isclose(composite_GGN, full_GGN, atol=1e-8)), "GGNs don't match!"
+    
+    alpha = 0.37
+    alpha_inv = 1. / alpha
+    
+    dummy = WTfun(jnp.zeros(D))
+    inner_shape = dummy.shape
+    d           = dummy.size
+    I_d         = jnp.eye(d, dtype=float)
+    # WTW = jax.vmap(lambda e: 
+    #         WT(W(e.reshape(inner_shape)))
+    #     )(I_d).reshape(d,d)
+    WTW = build_WTW(Wfun, WTfun, inner_shape, d, dtype=float, block=1)
+    
+    _,logdet_WTW = jnp.linalg.slogdet(I_d + alpha_inv*WTW)
+    logdet_term = logdet_WTW + D*jnp.log(alpha) # ! drop last term since it does not matter for optimization
 
 
 
