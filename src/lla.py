@@ -131,7 +131,7 @@ def predict_la_samples_dense(
 
 
 def predict_lla_scalable(map_state, Xnew, Z, model_type, alpha, key=None, full_set_size=None, num_samples=1):
-    flat_params, unravel_fn = flatten_nn_params(map_state.params['params'])
+    flat_params, unravel_fn = flatten_nn_params(map_state.params)
     D = flat_params.shape[0]
     key = key if key is not None else jax.random.PRNGKey(123) # todo handle
     w_samples = sample(map_state, Z, D, alpha=alpha, key=key, model_type=model_type, num_samples=num_samples, full_set_size=full_set_size)
@@ -142,7 +142,7 @@ def predict_lla_scalable(map_state, Xnew, Z, model_type, alpha, key=None, full_s
         if model_type=="regressor":
             mu_batched = map_state.apply_fn(p, x, return_logvar=False)
         else:
-            mu_batched = map_state.apply_fn(p, x)
+            mu_batched = map_state.apply_fn(p, x, train=False)
         return mu_batched
     fmu = model_fun(flat_params, Xnew)
     def fz(p):

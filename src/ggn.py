@@ -154,7 +154,7 @@ def compute_ggn_dense(state, Z, model_type, full_set_size=None):
         model_type: "regressor"|"classifier"
         full_set_size: (if using inducing points or minibatching) size of full data set.
     """
-    flat_params, unravel_fn = flatten_nn_params(state.params['params'])
+    flat_params, unravel_fn = flatten_nn_params(state.params)
 
     def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
