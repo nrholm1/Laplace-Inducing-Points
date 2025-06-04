@@ -1,14 +1,15 @@
 model:
-  name:                  LeNet5
+  name:                  ResNet1
   type:                  classifier
-  seed:                  123123123
+  num_c:                 10
+  seed:                  1231231234
 optimization:
-  alpha:                 0 #0.01
+  alpha:                 0.1 # 0.0001
   full_set_size:         60_000
   map:
-    lr:                  0.0005
+    lr:                  0.0001
     seed:                32132132
-    epochs:              150
+    epochs:              50
     batch_size:          256
   ip:
     m:                   50
@@ -16,8 +17,8 @@ optimization:
     seed:                280300
     epochs:              100
     batch_size:          256
-    mc_samples:          100
-    st_samples:          256
+    mc_samples:          64
+    st_samples:          50
     slq_samples:         -1
     slq_num_matvecs:     -1
 sampling:

@@ -12,7 +12,7 @@ import optax
 import matplotlib.pyplot as plt
 
 from src.scaledata import get_dataloaders
-from src.scalemodels import get_model
+from src.scalemodels import EMPTY_STATS, TrainState, get_model
 
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
@@ -63,14 +63,16 @@ def main():
     model_seed = model_cfg['seed']
     rng_model = jax.random.PRNGKey(model_seed)
     model = get_model(model_cfg)
-    variables = model.init(rng_model, dummy_inp)
+    variables = model.init(rng_model, dummy_inp, train=True)
     
     # Build train_state for MAP
     optimizer_map = optax.adam(lr_map)
-    model_state = train_state.TrainState.create(
+    # model_state = train_state.TrainState.create(
+    model_state = TrainState.create(
         apply_fn=model.apply,
         params=variables,
-        tx=optimizer_map
+        tx=optimizer_map,
+        batch_stats = variables.get('batch_stats', EMPTY_STATS),
     )
     map_ckpt_prefix = f"map_{args.dataset}"
 

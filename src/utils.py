@@ -11,11 +11,10 @@ is_pd = lambda M: jnp.all(jnp.linalg.eigvals(M) >= 1e-9)
 
 def flatten_nn_params(params):
     # ! maybe inefficient?
-    # Remove the 'logvar' parameter
-    params_without_logvar = {
-        k: v for k, v in params.items() if k != 'logvar'
+    nn_params = {
+        k: v for k, v in params.items() if k not in ['logvar', 'batch_stats']
     }
-    return jax.flatten_util.ravel_pytree({'params': params_without_logvar})
+    return jax.flatten_util.ravel_pytree(nn_params)
     
 
 def save_array_checkpoint(array, ckpt_dir, name, step):

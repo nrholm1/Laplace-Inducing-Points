@@ -30,7 +30,7 @@ class SimpleClassifier(nn.Module):
     numc: int # number of classes
     
     @nn.compact
-    def __call__(self, X):
+    def __call__(self, X, *args, **kwargs):
         for _ in range(self.numl):
             X = nn.tanh(nn.Dense(features=self.numh)(X))
         logits = nn.Dense(features=self.numc)(X)

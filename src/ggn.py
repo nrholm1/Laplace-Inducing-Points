@@ -7,7 +7,7 @@ from src.utils import flatten_nn_params
 
 
 def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
-    flat_params, unravel_fn = flatten_nn_params(state.params['params'])
+    flat_params, unravel_fn = flatten_nn_params(state.params)
     M = Z.shape[0]
     N = full_set_size or M
     recal_term = jnp.sqrt( N/M )
@@ -44,7 +44,11 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
         if model_type == 'regressor':
             return state.apply_fn(p_unr, zi, return_logvar=False)
         else:
-            return state.apply_fn(p_unr, zi)
+            variables = {
+                'params': p_unr['params'],
+                'batch_stats': state.batch_stats
+            }
+            return state.apply_fn(variables, zi, train=False, mutable=False)
 
     def WT_per_point(i,v):
         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
@@ -100,7 +104,7 @@ def compute_ggn_vp(state, Z, model_type, full_set_size=None):
         full_set_size: (if using inducing points or minibatching) size of full data set.
     """
     # flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params['params'])
-    flat_params, unravel_fn = flatten_nn_params(state.params['params'])
+    flat_params, unravel_fn = flatten_nn_params(state.params)
     M = Z.shape[0]
     N = full_set_size or M
     recal_term = N / M
@@ -110,7 +114,12 @@ def compute_ggn_vp(state, Z, model_type, full_set_size=None):
     def model_fun(flatp, zi):
         p_unr = unravel_fn(flatp)
         if model_type == "regressor": return state.apply_fn(p_unr, zi, return_logvar=False)
-        else: return state.apply_fn(p_unr, zi)
+        else: 
+            variables = {
+                'params': p_unr['params'],
+                'batch_stats': state.batch_stats
+            }
+            return state.apply_fn(variables, zi, train=False, mutable=False)
         
     def H_action(fzi, u):
         if model_type == "classifier": # closed form softmax cross-entropy Hessian
@@ -150,7 +159,7 @@ def compute_ggn_dense(state, Z, model_type, full_set_size=None):
     def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
         if model_type == "regressor": return state.apply_fn(p_unr, xi, return_logvar=False)
-        else: return state.apply_fn(p_unr, xi)
+        else: return state.apply_fn(p_unr, xi, train=False)
 
     M = Z.shape[0]
     # Initialize GGN as a zero matrix

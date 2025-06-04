@@ -15,58 +15,11 @@ from src.matfree_monkeypatch import integrand_funm_sym_logdet
 from src.stochtrace import hutchpp, hutchpp_v2
 from src.lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
 from src.ggn import compute_W_vps, build_WTW
-from src.train_map import nl_likelihood_fun_regression
+# from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params
 from src.toydata import plot_binary_classification_data
 from src.data import make_iter
 from src.nplot import scatterp, plot_grayscale
-
-
-def sample_params(mu, cov, rng, num_samples=1):
-    eps = jax.random.normal(rng, shape=mu.shape)
-    # Cholesky to map eps ~ N(0,I) -> theta ~ N(mu, cov)
-    L = jnp.linalg.cholesky(cov)
-    return mu + L @ eps
-
-
-def var_loglik_fun(q, batch, apply_fn, unravel_fn, rng, num_mc_samples):
-    """
-    # ! using MC sample(s) of parameters
-    """
-    mu, cov = q.mean(), q.covariance()
-    log_sum = 0.0
-    for i in range(num_mc_samples):
-        rng_i = jax.random.fold_in(rng, i)  # make a fresh key
-        theta_sample = sample_params(mu, cov, rng_i)
-        theta_sample = unravel_fn(theta_sample)
-        log_p_data = -nl_likelihood_fun_regression(apply_fn, theta_sample, batch) # ! nll, therefore negate it...
-        log_sum += log_p_data
-    return log_sum / num_mc_samples
-
-
-def var_kl_fun(q, alpha):
-    mu, cov = q.mean(), q.covariance()
-    D = cov.shape[0]
-    tr_term = alpha * jnp.linalg.trace(cov)
-    norm_term = alpha * jnp.linalg.norm(mu) ** 2
-    logdetp_term = jnp.log(D / alpha + 1e-9)  # log(det( I * alpha^(-1) ))
-    logdetq_term = jnp.log(jnp.linalg.det(cov) + 1e-9)  # todo fix: hack = add epsilon term
-    kl_term = 0.5 * (tr_term - D + norm_term + logdetp_term - logdetq_term)
-    return kl_term
-
-
-def naive_objective(z, dataset, state, alpha, rng, num_mc_samples, model_type, full_set_size=None):
-    q, unravel_fn = posterior_lla_dense(
-        state,
-        alpha=alpha,
-        x=z,
-        model_type=model_type,
-        full_set_size=full_set_size,
-        return_unravel_fn=True)
-    loglik_term = var_loglik_fun(q, dataset, state.apply_fn, unravel_fn, rng, num_mc_samples=num_mc_samples)
-    kl_term = var_kl_fun(q, alpha)
-    reg_term = 0 # ! reg_coeff * (jnp.sum(jnp.square(x)) + jnp.sum(jnp.square(w)))
-    return - (loglik_term - kl_term) + reg_term
 
 
 def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set_size=None,
@@ -82,7 +35,7 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     alpha_inv = 1.0 / alpha
     beta_inv = 1.0 / beta
     
-    D = count_model_params(state.params)
+    D = count_model_params(state.params['params'])
     if model_type == 'regressor':
         D -= 1 # ! subtract logvar parameter!
     

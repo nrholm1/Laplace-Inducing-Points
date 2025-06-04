@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from seaborn import set_style
 set_style('darkgrid')
 
+from src.scalemodels import TrainState, EMPTY_STATS
 from src.toymodels import SimpleRegressor, SimpleClassifier
 from src.toydata import get_dataloaders, load_toydata
 from src.nplot import make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
@@ -83,7 +84,7 @@ def plot_inducing_dense(model_type, map_model_state,
             map_model_state, xlin, Xtrain, model_type=model_type, alpha=alpha
         )
         postpreddist_optimized = predict_lla_dense(
-            map_model_state, xlin, Z, model_type=model_type, alpha=alpha,
+            map_model_state, xlin, zinduc, model_type=model_type, alpha=alpha,
             full_set_size=Xtrain.shape[0]
         )
         
@@ -182,10 +183,11 @@ def main():
 
     # Build train_state for MAP
     optimizer_map = optax.adam(lr_map)
-    model_state = train_state.TrainState.create(
+    model_state = TrainState.create(
         apply_fn=model.apply,
         params=variables,
-        tx=optimizer_map
+        tx=optimizer_map,
+        batch_stats = variables.get('batch_stats', EMPTY_STATS),
     )
     map_ckpt_prefix = f"map_{args.dataset}"
 
