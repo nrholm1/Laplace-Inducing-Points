@@ -95,7 +95,7 @@ def plot_lla_2D_classification(
             full_set_size=N
         )
         logit_samples = logit_dist.sample(seed=key, sample_shape=(num_mc_samples,))
-        logit_samples = logit_samples.at[jnp.isnan(logit_samples)].set(0)
+        # logit_samples = logit_samples.at[jnp.isnan(logit_samples)].set(0)
     
     prob_samples  = jax.nn.softmax(logit_samples, axis=-1)[:,:,0]
 

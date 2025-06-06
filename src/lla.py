@@ -12,7 +12,7 @@ def compute_curvature_approx(map_state, Z, model_type, alpha, full_set_size=None
     """
     Return linear operator oracle for computing mvp with PD negative approximate Hessian of the model parameters.
     
-    > GGN = J.T @ H @ J + alpha·I,
+    > J.T @ H @ J + alpha·I,
     
     where alpha is prior precision.
     """
@@ -26,7 +26,7 @@ def compute_curvature_approx(map_state, Z, model_type, alpha, full_set_size=None
 def compute_curvature_approx_dense(map_state, x, model_type, alpha, full_set_size=None):
     """
     Compute PD negative approximate Hessian of the model parameters.
-    > GGN = J.T @ H @ J + alpha·I
+    > J.T @ H @ J + alpha·I
     - Note: Instantiates dense GGN matrix.
     """
     GGN, flat_params_map, unravel_fn = compute_ggn_dense(map_state, x, model_type=model_type, full_set_size=full_set_size)

@@ -11,6 +11,7 @@ import optax
 
 import matplotlib.pyplot as plt
 from seaborn import set_style
+
 set_style('darkgrid')
 
 from src.scalemodels import TrainState, EMPTY_STATS
@@ -19,6 +20,7 @@ from src.toydata import get_dataloaders, load_toydata
 from src.nplot import make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
 
 from src.train_map import train_map
+from src.train_alpha import train_map_then_alpha
 from src.train_inducing import train_inducing_points
 from src.lla import materialize_covariance, posterior_lla_dense, predict_lla_dense, predict_lla_scalable
 from src.sample import sample
@@ -155,6 +157,8 @@ def main():
     opt_cfg = cfg['optimization']
     alpha = opt_cfg["alpha"]
     map_cfg = opt_cfg["map"]
+    
+    full_set_size = opt_cfg["full_set_size"]
 
     map_batch_size = map_cfg["batch_size"]
     epochs_map = map_cfg["epochs"]
@@ -193,14 +197,28 @@ def main():
 
     # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
-        map_model_state = train_map(
+        # map_model_state = train_map(
+        #     model_state,
+        #     train_loader,
+        #     test_loader,
+        #     model_type=model_type,
+        #     alpha=alpha,
+        #     num_epochs=epochs_map
+        # )
+        
+        map_model_state, alpha = train_map_then_alpha(
             model_state,
             train_loader,
             test_loader,
             model_type=model_type,
-            alpha=alpha,
-            num_epochs=epochs_map
+            num_epochs=epochs_map,
+            alpha0=alpha,
+            alpha_lr=1e-2,
+            alpha_every=5,
+            burnin=100,
+            full_set_size=full_set_size,
         )
+        print(alpha)
         save_checkpoint(
             train_state=map_model_state,
             ckpt_dir=args.ckpt_map,
@@ -229,7 +247,7 @@ def main():
     rng_inducing = jax.random.PRNGKey(seed_inducing)
     train_loader_init, _ = get_dataloaders(dataset=args.dataset, batch_size=m_inducing)
     zinit = next(iter(train_loader_init))[0]
-    # zinit = jax.random.uniform(minval=-1, maxval=1, key=jax.random.PRNGKey(123), shape=zinit.shape)
+    zinit = jax.random.uniform(minval=-1, maxval=1, key=jax.random.PRNGKey(123), shape=zinit.shape)
     # zinit = jax.random.normal(key=jax.random.PRNGKey(123), shape=zinit.shape)
     train_loader_induc, _ = get_dataloaders(dataset=args.dataset, batch_size=inducing_batch_size)
 

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from flax import struct
 from flax.training import train_state
 
+from src.scalemodels import TrainState
 from src.toymodels import SimpleClassifier, SimpleRegressor
 from src.utils import load_yaml, load_checkpoint, load_array_checkpoint
 from src.data import JAXDataset, get_dataloaders
@@ -168,7 +169,8 @@ def classifier_state():
     variables = model.init(jax.random.PRNGKey(model_seed), dummy_inp)
 
     optimizer_map = optax.adam(1e-3)
-    model_state = train_state.TrainState.create(
+    # model_state = train_state.TrainState.create(
+    model_state = TrainState.create(
         apply_fn=model.apply,
         params=variables,
         tx=optimizer_map

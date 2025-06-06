@@ -43,7 +43,7 @@ DEVICE = cpu
 DATASET = spiral
 MODEL = toyclassifier
 SCALE_DATASET = fmnist
-SCALE_MODEL = resnet1
+SCALE_MODEL = lenet5-2
 
 
 run:

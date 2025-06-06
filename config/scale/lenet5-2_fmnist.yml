@@ -3,7 +3,7 @@ model:
   type:                  classifier
   seed:                  123123123
 optimization:
-  alpha:                 0 #0.01
+  alpha:                 0.005
   full_set_size:         60_000
   map:
     lr:                  0.0005

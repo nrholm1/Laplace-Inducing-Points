@@ -96,13 +96,13 @@ def test_WT_W_vps_2(classification_2d_data, classifier_state):
     inner_shape = dummy.shape
     d           = dummy.size
     I_d         = jnp.eye(d, dtype=float)
-    # WTW = jax.vmap(lambda e: 
-    #         WT(W(e.reshape(inner_shape)))
-    #     )(I_d).reshape(d,d)
     WTW = build_WTW(Wfun, WTfun, inner_shape, d, dtype=float, block=1)
     
     _,logdet_WTW = jnp.linalg.slogdet(I_d + alpha_inv*WTW)
     logdet_term = logdet_WTW + D*jnp.log(alpha) # ! drop last term since it does not matter for optimization
+    trace_WTW = jnp.linalg.trace(WTW)
+    trace_term = trace_WTW + D*alpha # ! drop last term since it does not matter for optimization
+    pass
 
 
 
