@@ -223,7 +223,54 @@ def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
         WTW    = jax.lax.dynamic_update_slice(WTW, cols_t, (0, start))
 
     return jnp.triu(WTW) + jnp.triu(WTW, 1).T
-    
+        
+
+import math, jax, jax.numpy as jnp
+from functools import partial
+
+def build_WTWz(
+    WT,                 # Wᵀ : codomain → R^{d}        (here d = 128*2 = 256)
+    W_z,                # W_z: R^{d_z} → codomain      (here d_z = 32*2 = 64)
+    inner_shape_z,      # shape of a single W_z parameter vector (32, 2)
+    *,                  # keyword-only below
+    d,                  # number of parameters of W  (256)
+    dtype=jnp.bfloat16,
+    block=64,
+):
+    # ------------------------------------------------------------------ #
+    d_z = math.prod(inner_shape_z)
+    # ------------------------------------------------------------------ #
+
+    @partial(jax.remat, static_argnums=1)          # k is static
+    def col_block(start, k):
+        rows = start + jnp.arange(k, dtype=jnp.int32)         # (k,)
+        # build k basis vectors for the *W_z* domain
+        E    = jax.nn.one_hot(rows, d_z, dtype=dtype)\
+                  .reshape((k,) + inner_shape_z)              # (k, 32, 2)
+        # propagate:  (k, …) —W_z→ (k, D) —Wᵀ→ (k, d)
+        cols = jax.vmap(lambda e: WT(W_z(e)).reshape(-1))(E)  # (k, d)
+        return cols.astype(dtype)                             # (k, d)
+
+    G = jnp.zeros((d, d_z), dtype=dtype)
+
+    n_full, tail = divmod(d_z, block)
+
+    def body(b, acc):
+        start  = b * block
+        cols_T = col_block(start, block).T               # (d, block)
+        return jax.lax.dynamic_update_slice(acc, cols_T, (0, start))
+
+    G = jax.lax.fori_loop(0, n_full, body, G)
+
+    if tail:
+        start  = n_full * block
+        cols_T = col_block(start, tail).T                # (d, tail)
+        G      = jax.lax.dynamic_update_slice(G, cols_T, (0, start))
+
+    return G
+
+
+
 
 def ensure_symmetry(M, jitter=1e-8):
     return 0.5 * (M + M.T) + jitter * jnp.eye(M.shape[0]) # ! enforce symmetry of a theoretically symmetric matrix for numerical stability

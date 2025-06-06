@@ -160,6 +160,7 @@ class ResNet1M(nn.Module):
 EMPTY_STATS = freeze({}) # used by models without BN
 class TrainState(train_state.TrainState):
     batch_stats: FrozenDict = EMPTY_STATS
+    alpha = None # optional optimized alpha
 
 
 def get_model(model_cfg):

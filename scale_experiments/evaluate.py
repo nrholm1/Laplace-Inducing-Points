@@ -6,13 +6,13 @@ import argparse, functools, pathlib, time
 import jax, jax.numpy as jnp
 from matplotlib import pyplot as plt
 import numpy as np
-from flax.training.train_state import TrainState
+# from flax.training.train_state import TrainState
 import optax
 from tqdm import tqdm
 
 from src.lla import predict_lla_scalable, predict_lla_dense
 from src.scaledata   import get_dataloaders
-from src.scalemodels import get_model
+from src.scalemodels import get_model, TrainState
 from src.utils       import (load_yaml, load_checkpoint,
                              load_array_checkpoint, print_options,
                              print_summary)
