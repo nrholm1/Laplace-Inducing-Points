@@ -1,24 +1,24 @@
 model:
   num_h: 32
-  num_l: 2
+  num_l: 3
   num_c: 2
   name: classifier
   type: classifier
   seed: 12345
 optimization:
   full_set_size: 1000 # ! remember to set
-  alpha: 0.0047465307 # 0.0009
+  alpha: 0.0009
   map:
     batch_size: 64
-    epochs: 1000
-    lr: 0.01
+    epochs: 200
+    lr: 0.0005
     seed: 127831678242
   ip:
     m: 35
     batch_size: 128
-    epochs: 350
+    epochs: 150
     lr: 0.01
-    mc_samples: 500
+    mc_samples: 300
     seed: 4231553
     st_samples: 32
     slq_samples: 1

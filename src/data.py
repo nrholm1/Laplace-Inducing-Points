@@ -56,22 +56,29 @@ def numpy_collate_fn(batch):
     return np.stack(xs), np.stack(ys)
 
 
-def get_dataloaders(train_dataset, test_dataset, batch_size, num_workers=0, collate_fn=numpy_collate_fn_old):
+def get_dataloaders(train_dataset, 
+                    test_dataset, 
+                    val_dataset=None, 
+                    batch_size=32,
+                    collate_fn=numpy_collate_fn_old):
     train_loader = data.DataLoader(train_dataset, 
                                    batch_size=batch_size, 
                                    shuffle=True, 
                                    collate_fn=collate_fn,
-                                   num_workers=num_workers,
-                                #    pin_memory=True,
                                    drop_last=True)
     test_loader = data.DataLoader(test_dataset, 
                                   batch_size=batch_size, 
                                   shuffle=False, 
                                   collate_fn=collate_fn, 
-                                   num_workers=num_workers,
-                                #    pin_memory=True,
                                   drop_last=True)
-    return train_loader, test_loader
+    if val_dataset is None:
+        return train_loader, test_loader
+    val_loader = data.DataLoader(val_dataset, 
+                                batch_size=batch_size, 
+                                shuffle=False, 
+                                collate_fn=collate_fn, 
+                                drop_last=True)
+    return train_loader, test_loader, val_loader
 
 
 

@@ -71,6 +71,36 @@ def spiral_dataset(n, key, noise=0.05):
     perm = jax.random.permutation(jax.random.fold_in(key, 42), n)
     return x[perm], y[perm]
 
+
+def noisy_spiral_dataset(n, key, noise=0.05):
+    assert n % 2 == 0, "n should be even so classes are balanced"
+    n_per = n // 2
+    k1, k2, k3 = jax.random.split(key, 3)
+    # radii ∈ (0,1], angles up to 3π
+    r     = jax.random.uniform(k1, (n_per,1))
+    theta = r * 3.0 * jnp.pi
+    x0    = jnp.concatenate([r*jnp.cos(theta),   r*jnp.sin(theta)], axis=1)
+    x1    = jnp.concatenate([r*jnp.cos(theta + jnp.pi),
+                             r*jnp.sin(theta + jnp.pi)], axis=1)
+    x0   += noise * jax.random.normal(k2, x0.shape)
+    x1   += noise * jax.random.normal(k3, x1.shape)
+    x     = jnp.vstack([x0, x1]).astype(jnp.float32)
+    y     = jnp.concatenate([jnp.zeros(n_per), jnp.ones(n_per)]).astype(jnp.int32)
+    return x, y
+
+def ring_dataset(n, key, radius=1.05, width=0.15, noise=0.02):
+    """
+    Uniformly sample n points in the annulus [radius, radius+width],
+    add small Gaussian noise, and assign random labels.
+    """
+    k1, k2, k3 = jax.random.split(key, 3)
+    r      = radius + jax.random.uniform(k1, (n,1)) * width
+    theta  = jax.random.uniform(k2, (n,1)) * 2.0 * jnp.pi
+    x_ring = jnp.concatenate([r*jnp.cos(theta), r*jnp.sin(theta)], axis=1)
+    x_ring += noise * jax.random.normal(k3, x_ring.shape)
+    y_ring = jax.random.bernoulli(k3, p=0.5, shape=(n,)).astype(jnp.int32)
+    return x_ring, y_ring
+
 def xor_dataset(n, key, noise=0.05):
     zkey, noisekey = jax.random.split(key, 2)
     z = jax.random.uniform(key=zkey, shape=(n,2))
@@ -177,8 +207,23 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
         x, y = banana_dataset(n, key, noise)
         plot_data(x,y,dataset_name,plot_binary_classification_data)
     elif dataset_name == 'spiral':
-        x, y = spiral_dataset(n, key, noise)
-        plot_data(x,y,dataset_name,plot_binary_classification_data)
+        # reserve 10% of n for the ring (validation)
+        n_val      = int(0.05 * n)
+        n_spiral   = n - n_val
+        k1, k2     = jax.random.split(key, 2)
+
+        # build spiral for the first (n - n_val) pts
+        x_sp, y_sp = noisy_spiral_dataset(n_spiral, k1, noise)
+        # build ring for the last n_val pts
+        x_rg, y_rg = ring_dataset(n_val,       k2,
+                                  radius=1.05,
+                                  width=0.15,
+                                  noise=noise)
+
+        # concatenate *without* shuffling so that the last 10% are ring
+        x = jnp.concatenate([x_sp, x_rg], axis=0)
+        y = jnp.concatenate([y_sp, y_rg], axis=0)
+        plot_data(x, y, dataset_name, plot_binary_classification_data)
     elif dataset_name == 'sine':
         x, y = sine_wave_dataset(n, key, noise, split_in_middle=split_in_middle)
         plot_data(x,y,dataset_name,plot_regression_data)
@@ -196,21 +241,24 @@ def load_toydata(dataset):
     y = jax.device_put(data_npz["y"])
     n_samples = x.shape[0]
 
-    # Create train/test split
-    trainsplit = int(0.9 * n_samples)
+    # Create train/test/val split
+    trainsplit = int(0.8 * n_samples)
+    testsplit  = trainsplit + int(0.10 * n_samples)
     xtrain, ytrain = x[:trainsplit], y[:trainsplit]
-    xtest,  ytest  = x[trainsplit:], y[trainsplit:]
-    return (xtrain,ytrain), (xtest,ytest)
+    xtest,  ytest  = x[trainsplit:testsplit], y[trainsplit:testsplit]
+    xval,   yval  = x[testsplit:], y[testsplit:]
+    return (xtrain,ytrain), (xtest,ytest), (xval,yval)
 
 
 def get_dataloaders(dataset, batch_size):
-    (xtrain,ytrain), (xtest,ytest) = load_toydata(dataset)
+    (xtrain,ytrain), (xtest,ytest), (xval,yval) = load_toydata(dataset)
     
     train_dataset = JAXDataset(xtrain, ytrain)
     test_dataset  = JAXDataset(xtest,  ytest)
-    train_loader, test_loader = _get_dataloaders(train_dataset, test_dataset, batch_size, num_workers=0, collate_fn=jax_collate_fn)
+    val_dataset  = JAXDataset(xval,  yval)
+    train_loader, test_loader, val_loader = _get_dataloaders(train_dataset, test_dataset, val_dataset, batch_size, collate_fn=jax_collate_fn)
     
-    return train_loader, test_loader
+    return train_loader, test_loader, val_loader
 
 
 ################################################################################

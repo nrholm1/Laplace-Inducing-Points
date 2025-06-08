@@ -70,7 +70,6 @@ def get_dataloaders(name, batch_size, num_workers=0):
     train_loader, test_loader = _get_dataloaders(
         train_dataset, test_dataset,
         batch_size,
-        num_workers=num_workers,
         collate_fn=numpy_collate_fn
     )
     

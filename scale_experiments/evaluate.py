@@ -61,12 +61,30 @@ def batch_nll(state, x, y, Z, *, alpha, full_set_size,
         logit_samples = logit_dist.sample(seed=rng, sample_shape=(num_mc_samples,))
     
     # logit_samples = state.apply_fn(state.params, x)[None] # ! MAP estimator sanity check
+    
+    S = logit_samples.shape[0]
+    log_probs = jax.nn.log_softmax(logit_samples, axis=-1)          # (S,B,C)
+    # gather the log-probability of the *true* class
+    y_int = y.squeeze().astype(jnp.int32)                           # ensure int32
+    log_p_true = jnp.take_along_axis(
+        log_probs,
+        y_int[None, :, None],                                       # (1,B,1)  broadcasts over S
+        axis=-1
+    ).squeeze(-1)                                                  # (S,B)
+
+    # log of the MC-averaged predictive probability  log( 1/S Σ_s p_s )
+    log_avg_prob = (
+        jax.scipy.special.logsumexp(log_p_true, axis=0)             # (B,)
+        - jnp.log(S)
+    )
+
+    nll = -jnp.mean(log_avg_prob)
 
     probs = jax.nn.softmax(logit_samples, axis=-1)      # (S,B,C)
     mean  = probs.mean(axis=0)                          # (B,C)
 
-    one_hot_y = jax.nn.one_hot(y.squeeze(), logit_samples.shape[-1])
-    nll = jnp.mean(optax.softmax_cross_entropy(logit_samples, one_hot_y))
+    # one_hot_y = jax.nn.one_hot(y.squeeze(), logit_samples.shape[-1])
+    # nll = jnp.mean(optax.softmax_cross_entropy(logit_samples, one_hot_y))
     acc   = (mean.argmax(-1) == y.squeeze()).mean()
 
     # pdb.set_trace()
@@ -74,14 +92,14 @@ def batch_nll(state, x, y, Z, *, alpha, full_set_size,
     return nll, acc
 
 
-def eval_dataset(state, test_loader, Z, alpha,
+def eval_dataset(state, dataloader, Z, alpha,
                  full_set_size, model_type, num_mc_samples,
                  scalable=True):
 
     tot_nll, tot_correct, tot_N = 0.0, 0.0, 0
     rng = jax.random.PRNGKey(420) # static key
 
-    pbar = tqdm(test_loader)
+    pbar = tqdm(dataloader)
     for x_b, y_b in pbar:
         rng, sub = jax.random.split(rng)
         nll, acc = batch_nll(state, x_b, y_b,
@@ -131,7 +149,7 @@ def main():
     lr_map         = map_cfg["lr"]
 
     if args.dataset in ["spiral", "banana"]: # todo implement more toy datasets?
-        train_loader, test_loader = get_toydataloaders(args.dataset, batch_size)
+        train_loader, test_loader, _ = get_toydataloaders(args.dataset, batch_size)
     else:
         train_loader, test_loader = get_dataloaders(args.dataset, batch_size)
 
@@ -157,14 +175,6 @@ def main():
             name=induc_ckpt_name,
             step=epochs_inducing
         )
-    
-    # todo for debugging
-    # plot_mnist(Z[:32].squeeze())
-    # exit()
-    # (xtrain,_),_ = load_toydata(args.dataset)
-    # print(xtrain.shape)
-    # xload, _ = get_dataloaders(args.dataset, 100)
-    # xtrain = next(iter(xload))[0]
     
     # --------------   evaluation   --------------------
     t0 = time.time()

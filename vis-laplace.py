@@ -56,7 +56,7 @@ laplace = norm.pdf(x, loc=x0, scale=sigma)
 fig, ax = plt.subplots(figsize=(8, 3))
 
 ax.plot(x, laplace, linestyle="--", linewidth=3,
-        label=r"Laplace Approximation $q(\theta)$",
+        label=r"Laplace Approximation $q(\theta\mid\mathcal{D})$",
         color="orange")
 ax.plot(x, p,      linewidth=2,
         label=r"True posterior $p(\theta\mid\mathcal{D})$",

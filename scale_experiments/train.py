@@ -82,26 +82,26 @@ def main():
     
     # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
-        # map_model_state = train_map(
-        #     model_state,
-        #     train_loader,
-        #     test_loader,
-        #     model_type=model_type,
-        #     alpha=alpha,
-        #     num_epochs=epochs_map
-        # )
-        map_model_state, alpha = train_map_then_alpha(
+        map_model_state = train_map(
             model_state,
             train_loader,
             test_loader,
             model_type=model_type,
-            num_epochs=epochs_map,
-            alpha0=alpha,
-            alpha_lr=1e-2,
-            alpha_every=5,
-            burnin=25,
-            full_set_size=full_set_size,
+            alpha=alpha,
+            num_epochs=epochs_map
         )
+        # map_model_state, alpha = train_map_then_alpha(
+        #     model_state,
+        #     train_loader,
+        #     test_loader,
+        #     model_type=model_type,
+        #     num_epochs=epochs_map,
+        #     alpha0=alpha,
+        #     alpha_lr=1e-2,
+        #     alpha_every=5,
+        #     burnin=25,
+        #     full_set_size=full_set_size,
+        # )
         save_checkpoint(
             train_state=map_model_state,
             ckpt_dir=args.ckpt_map,

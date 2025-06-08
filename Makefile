@@ -98,7 +98,7 @@ visualize:
 visualize_full:
 	$(MAKE) run mode=visualize EXTRA_ARGS=--full
 svisualize:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs)"
+	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs) --alpha_ip 4.642e-03"
 svisualize_full:
 	$(MAKE) run mode=visualize EXTRA_ARGS="--full --scalable --num_mc_samples_lla $(mcs)"
 
@@ -134,3 +134,5 @@ all-data:
 	$(PYTHON_INTERPRETER) $(datamain) --dataset sine --n_samples $(N1) --noise $(EPS1) --seed $(SEED1) $(ARGS1)
 	$(PYTHON_INTERPRETER) $(datamain) --dataset xor --n_samples $(N2) --noise $(EPS2) --seed $(SEED2) $(ARGS2)
 	$(PYTHON_INTERPRETER) $(datamain) --dataset banana --n_samples $(N3) --noise $(EPS3) --seed $(SEED3) $(ARGS3)
+
+# make data D=spiral N=1000 EPS=0.08 SEED=1234

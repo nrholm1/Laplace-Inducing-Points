@@ -20,10 +20,9 @@ from src.toydata import get_dataloaders, load_toydata
 from src.nplot import make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
 
 from src.train_map import train_map
-from src.train_alpha import train_map_then_alpha
 from src.train_inducing import train_inducing_points
-from src.lla import materialize_covariance, posterior_lla_dense, predict_lla_dense, predict_lla_scalable
-from src.sample import sample
+from src.lla import predict_lla_dense, predict_lla_scalable
+from src.grid_search import grid_search_alpha
 from src.utils import flatten_nn_params, load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
     
 # jax.config.update("jax_enable_x64", True)
@@ -118,6 +117,8 @@ def main():
                         help="Whether to use scalable (matrix free) IP optimization and LLA sampling.")
     parser.add_argument("--num_mc_samples_lla", type=int, default=1000,
                         help="Number of MC samples for LLA predictive dist.")
+    parser.add_argument("--alpha_ip", type=float, default=None,
+                        help="IP alpha to use - default is to grid search for it.")
     parser.add_argument("--plot_Z", action="store_true",
                         help="Whether to plot inducing points.")
     parser.add_argument("--plot_X", action="store_true",
@@ -166,7 +167,7 @@ def main():
     seed_map = map_cfg["seed"]
     
     # Load data
-    train_loader, test_loader = get_dataloaders(dataset=args.dataset, batch_size=map_batch_size)
+    train_loader, test_loader, _ = get_dataloaders(dataset=args.dataset, batch_size=map_batch_size)
     
     dummy_input = next(iter(train_loader))[0][:1]
     variables = model.init(rng_model, dummy_input)
@@ -197,28 +198,15 @@ def main():
 
     # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
-        # map_model_state = train_map(
-        #     model_state,
-        #     train_loader,
-        #     test_loader,
-        #     model_type=model_type,
-        #     alpha=alpha,
-        #     num_epochs=epochs_map
-        # )
-        
-        map_model_state, alpha = train_map_then_alpha(
+        map_model_state = train_map(
             model_state,
             train_loader,
             test_loader,
             model_type=model_type,
-            num_epochs=epochs_map,
-            alpha0=alpha,
-            alpha_lr=1e-2,
-            alpha_every=5,
-            burnin=100,
-            full_set_size=full_set_size,
+            alpha=alpha,
+            num_epochs=epochs_map
         )
-        print(alpha)
+        
         save_checkpoint(
             train_state=map_model_state,
             ckpt_dir=args.ckpt_map,
@@ -226,8 +214,10 @@ def main():
             step=epochs_map
         )
         
+        train_data,test_data,_ = load_toydata(args.dataset) # get train/test data for plots
         plot_map(map_model_state, 
-                 *load_toydata(args.dataset), # get train/test data for plots
+                 train_data,
+                 test_data, 
                  alpha, 
                  model_type=model_type, 
                  dataset_name=args.dataset)
@@ -245,11 +235,19 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    train_loader_init, _ = get_dataloaders(dataset=args.dataset, batch_size=m_inducing)
+    train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_inducing)
     zinit = next(iter(train_loader_init))[0]
-    zinit = jax.random.uniform(minval=-1, maxval=1, key=jax.random.PRNGKey(123), shape=zinit.shape)
-    # zinit = jax.random.normal(key=jax.random.PRNGKey(123), shape=zinit.shape)
-    train_loader_induc, _ = get_dataloaders(dataset=args.dataset, batch_size=inducing_batch_size)
+    train_loader_induc, *_ = get_dataloaders(dataset=args.dataset, batch_size=inducing_batch_size)
+    
+    alpha_ip = args.alpha_ip
+    if alpha_ip is None:
+        alpha_ip = grid_search_alpha(map_model_state,
+                             zinit,
+                             val_loader,
+                             full_set_size=full_set_size,
+                             model_type=model_cfg["type"],
+                             num_mc_samples=ip_cfg["mc_samples"],
+                             scalable=True)
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
@@ -262,7 +260,7 @@ def main():
             rng=rng_inducing,
             model_type=model_type,
             num_mc_samples=mc_samples,
-            alpha=alpha,
+            alpha=alpha_ip,
             num_steps=epochs_inducing,
             full_set_size=opt_cfg['full_set_size'],
             scalable=args.scalable,
@@ -299,7 +297,7 @@ def main():
             plt.title(f"Full LLA / {opt_cfg['full_set_size']} data points")
         else:
             plt.title(f"IP LLA / {m_inducing} inducing points, {epochs_inducing} steps")
-        (xtrain,ytrain),_ = load_toydata(args.dataset)
+        (xtrain,ytrain),*_ = load_toydata(args.dataset)
         plot_lla_2D_classification(
             fig,
             ax,
@@ -307,7 +305,7 @@ def main():
             xtrain,
             ytrain,
             zinducing,
-            alpha,
+            alpha_ip,
             mode="full_lla" if args.full else "ip_lla",
             matrix_free=args.scalable,
             num_mc_samples=args.num_mc_samples_lla,
