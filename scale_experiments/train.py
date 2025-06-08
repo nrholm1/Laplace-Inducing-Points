@@ -15,6 +15,7 @@ from src.scaledata import get_dataloaders
 from src.scalemodels import EMPTY_STATS, TrainState, get_model
 
 from src.train_map import train_map
+from src.grid_search import grid_search_alpha
 from src.train_inducing import train_inducing_points
 from src.utils import flatten_nn_params, load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
 from src.train_alpha import train_map_then_alpha
@@ -28,6 +29,8 @@ def main():
                         help="Which phase(s) to run.")
     parser.add_argument("--continue", action="store_true",
                         help="Continue training from checkpoint") # todo !!! (might not be needed)
+    parser.add_argument("--alpha_ip", type=float, default=None,
+                        help="IP alpha to use - default is to grid search for it.")
     parser.add_argument("--dataset", type=str, required=True,
                         help="Dataset name.")
     parser.add_argument("--config", type=str, required=True,
@@ -56,7 +59,7 @@ def main():
     seed_map       = map_cfg["seed"]
 
     # Initialize dataloaders
-    train_loader, test_loader = get_dataloaders(args.dataset, map_batch_size, num_workers=0)
+    train_loader, test_loader, val_loader = get_dataloaders(args.dataset, map_batch_size, num_workers=0)
     
     # Initialize model
     dummy_inp = next(iter(train_loader))[0][:1] # shape (1,28,28,1)
@@ -137,9 +140,20 @@ def main():
     
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    train_loader_init, _ = get_dataloaders(args.dataset, m_inducing)
+    train_loader_init, *_ = get_dataloaders(args.dataset, m_inducing)
     zinit = next(iter(train_loader_init))[0] # Init IP from training data sample
-    train_loader_induc, _ = get_dataloaders(args.dataset, inducing_batch_size)
+    train_loader_induc, _, val_loader = get_dataloaders(args.dataset, inducing_batch_size)
+    
+    alpha_ip = args.alpha_ip
+    if alpha_ip is None:
+        alpha_ip = grid_search_alpha(map_model_state,
+                             zinit,
+                             val_loader,
+                             full_set_size=full_set_size,
+                             model_type=model_cfg["type"],
+                             num_mc_samples=ip_cfg["mc_samples"],
+                             scalable=True)
+
     
 
     if args.mode in ["train_inducing", "full_pipeline"]:

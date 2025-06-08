@@ -3,7 +3,7 @@ import jax, jax.numpy as jnp
 import numpy as np
 from tqdm import tqdm
 
-from scale_experiments.evaluate import eval_dataset
+from evaluate import eval_dataset
 
 
 def grid_search_alpha(state,

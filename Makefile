@@ -98,14 +98,14 @@ visualize:
 visualize_full:
 	$(MAKE) run mode=visualize EXTRA_ARGS=--full
 svisualize:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs) --alpha_ip 4.642e-03"
+	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs)"
 svisualize_full:
 	$(MAKE) run mode=visualize EXTRA_ARGS="--full --scalable --num_mc_samples_lla $(mcs)"
 
 train_map_scale:
 	$(MAKE) train_scale mode=train_map
 train_ip_scale:
-	$(MAKE) train_scale mode=train_inducing
+	$(MAKE) train_scale mode=train_inducing EXTRA_ARGS="--alpha_ip 100"
 
 
 # debug targets
