@@ -42,8 +42,8 @@ DEVICE = cpu
 
 DATASET = spiral
 MODEL = toyclassifier
-SCALE_DATASET = fmnist
-SCALE_MODEL = lenet5-2
+SCALE_DATASET = cifar10
+SCALE_MODEL = resnet1
 
 
 run:
@@ -105,7 +105,8 @@ svisualize_full:
 train_map_scale:
 	$(MAKE) train_scale mode=train_map
 train_ip_scale:
-	$(MAKE) train_scale mode=train_inducing EXTRA_ARGS="--alpha_ip 100"
+	$(MAKE) train_scale mode=train_inducing 
+#EXTRA_ARGS="--alpha_ip 10000"
 
 
 # debug targets

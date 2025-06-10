@@ -30,6 +30,37 @@ def load_fmnist_numpy(train=True):
         labs.append(lab)
     return np.stack(imgs, axis=0), np.array(labs, dtype=np.int32)
 
+
+def _cifar10_transform(train=True, aug=True):
+    if not train or not aug:
+        pipeline = [
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914,0.4822,0.4465),
+                        (0.2023,0.1994,0.2010)),
+        ]
+    else:
+        pipeline = [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914,0.4822,0.4465),
+                        (0.2023,0.1994,0.2010)),
+        ]
+    return transforms.Compose(pipeline)
+
+def _load_cifar10_numpy(train=True):
+    """Return (N,32,32,3) float32 [0,1], (N,) int32."""
+    # tfm = transforms.Compose([transforms.ToTensor()])  # C,H,W float32
+    ds  = datasets.CIFAR10(root='./data', train=train,
+                           download=True, 
+                           transform=_cifar10_transform(train, aug=train))
+    imgs, labs = [], []
+    for img, lab in ds:
+        # (3,32,32)  -> (32,32,3)
+        imgs.append(np.transpose(img.numpy(), (1, 2, 0)))
+        labs.append(lab)
+    return np.stack(imgs).astype(np.float32), np.array(labs, np.int32)
+
 def get_dataloaders(name, batch_size, num_workers=0):
     """
     Returns three loaders: train, test, val.
@@ -43,13 +74,17 @@ def get_dataloaders(name, batch_size, num_workers=0):
     elif name == 'fmnist':
         x_all, y_all   = load_fmnist_numpy(train=True)
         x_test, y_test = load_fmnist_numpy(train=False)
+        
+    elif name == 'cifar10':
+        x_all, y_all   = _load_cifar10_numpy(train=True)
+        x_test, y_test = _load_cifar10_numpy(train=False)
 
     else:
         raise ValueError(f"Unknown dataset name '{name}'")
 
     # ---- split train→train/val (last 2.5% val) ----
     n_total   = x_all.shape[0]
-    n_val     = int(0.025 * n_total)
+    n_val     = int(0.02 * n_total)
     n_train   = n_total - n_val
 
     x_train = x_all[:n_train]

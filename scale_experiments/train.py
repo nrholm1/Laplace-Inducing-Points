@@ -152,9 +152,10 @@ def main():
                              full_set_size=full_set_size,
                              model_type=model_cfg["type"],
                              num_mc_samples=ip_cfg["mc_samples"],
-                             scalable=True)
-
-    
+                             scalable=True,
+                             log10_min=4,
+                             log10_max=5,
+                             n_coarse=7,)
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
@@ -167,7 +168,7 @@ def main():
             rng=rng_inducing,
             model_type=model_type,
             num_mc_samples=mc_samples,
-            alpha=alpha,
+            alpha=alpha_ip,
             num_steps=epochs_inducing,
             full_set_size=full_set_size,
             scalable=True,

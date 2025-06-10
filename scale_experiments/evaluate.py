@@ -151,7 +151,7 @@ def main():
     if args.dataset in ["spiral", "banana"]: # todo implement more toy datasets?
         train_loader, test_loader, _ = get_toydataloaders(args.dataset, batch_size)
     else:
-        train_loader, test_loader = get_dataloaders(args.dataset, batch_size)
+        train_loader, test_loader, _ = get_dataloaders(args.dataset, batch_size)
 
     # ---------------- model & MAP weights -------------
     dummy_input = next(iter(train_loader))[0][:1]          # (1,28,28,1)

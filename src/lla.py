@@ -142,13 +142,15 @@ def predict_lla_scalable(map_state, Xnew, Z, model_type, alpha, key=None, full_s
         if model_type=="regressor":
             mu_batched = map_state.apply_fn(p, x, return_logvar=False)
         else:
-            mu_batched = map_state.apply_fn(p, x, train=False)
+            # mu_batched = map_state.apply_fn(p, x, train=False, mutable=False)
+            vars_in = {"params": p['params'], "batch_stats": map_state.batch_stats}
+            mu_batched = map_state.apply_fn(vars_in, x, train=False, mutable=False)
         return mu_batched
     fmu = model_fun(flat_params, Xnew)
     def fz(p):
         return model_fun(p, Xnew)
     dy_fun = lambda w_sample: jax.jvp(fz, (flat_params,), (w_sample,))[1]
-    dys    = jax.vmap(dy_fun)(w_samples)
+    dys    = jax.lax.map(dy_fun, w_samples)
     # pdb.set_trace()
     return fmu[None] + dys
 
