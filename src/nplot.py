@@ -29,7 +29,7 @@ mpl.rcParams.update({
     ,
     "pdf.fonttype": 42,                      # embed Type-42 (TrueType) fonts in PDF
     "ps.fonttype": 42,
-    "font.size": 15, #20
+    "font.size":  22, # 15
 })
 
 class Colors(str, Enum):
@@ -47,9 +47,9 @@ def get_palette():
 def plot_regression_data(x,y):
     scatterp(x, y, label='data')
 
-def plot_binary_classification_data(x,y,ax=plt):
-    scatterp(*x[y==0].T, label='Class 0', color='salmon', zorder=2, ax=ax)
-    scatterp(*x[y==1].T, label='Class 1', zorder=2, ax=ax)
+def plot_binary_classification_data(x,y,ax=plt, c1='salmon', c2=Colors.paleblue):
+    scatterp(*x[y==0].T, label='Class 0', color=c1, zorder=2, ax=ax)
+    scatterp(*x[y==1].T, label='Class 1', color=c2, zorder=2, ax=ax)
 
 
 def plot_lla_2D_classification(
@@ -63,8 +63,10 @@ def plot_lla_2D_classification(
         matrix_free: bool,
         num_mc_samples: int,
         mode: str,
+        key,
         plot_Z: bool = False,
         plot_X: bool = False, 
+        cbar: bool = True
     ):
     assert mode in {"ip_lla", "full_lla"}, "Please select a mode. Options = [ip, full]"
     
@@ -73,7 +75,7 @@ def plot_lla_2D_classification(
     t = jnp.linspace(tmin, tmax, 150)
     X, Y = jnp.meshgrid(t, t, indexing="ij")
     pts = jnp.stack([X.ravel(), Y.ravel()], axis=-1)
-    key = jax.random.PRNGKey(0) # todo handle?
+    # key = jax.random.PRNGKey(0) # todo handle?
     
     if matrix_free:
         logit_samples = predict_lla_scalable(
@@ -111,18 +113,26 @@ def plot_lla_2D_classification(
         norm=norm1,
         rasterized=True
     )
-    cbar1 = fig.colorbar(cf1, ax=ax[0], label=r"$\text{E}[\mathbf{y^*|x^*},\mathcal{D}]$", location="left")
-    cbar1.set_ticks(jnp.linspace(vmin1, vmax1, 2))  # nice round ticks
-    cbar1.ax.yaxis.set_ticks_position('right')
-    cbar1.ax.yaxis.set_label_position('left')
-    ax[0].set_title("LLA predictive mean")
-    cbars = [cbar1]
+    if cbar:
+        cbar1 = fig.colorbar(cf1, ax=ax[0], label=r"$\text{E}[\mathbf{y^*|x^*},\mathcal{D}]$", location="left")
+        tick_vals = jnp.linspace(vmin1, vmax1, 2)
+        cbar1.set_ticks(tick_vals)  # nice round ticks
+        phantom_labels = [
+            rf'${x:.0f}.00$'
+            for x in tick_vals
+        ]
+        cbar1.set_ticklabels(phantom_labels)
+        cbar1.ax.yaxis.set_ticks_position('right')
+        cbar1.ax.yaxis.set_label_position('left')
+        ax[0].set_title("LLA predictive mean")
+        cbars = [cbar1]
 
     """Plot empirical Variance"""
     var_probs = prob_samples.var(0)
     Z2 = var_probs.reshape(X.shape)
     cmap2  = mpl.colors.LinearSegmentedColormap.from_list("bwr", ["white", "black"])
     vmin2, vmax2 = 0.0, jnp.round(Z2.max(),2)
+    # vmin2, vmax2 = 0.0, 0.25
     norm2 = mpl.colors.Normalize(vmin2, vmax2)
     cf2 = ax[1].pcolormesh(
         X, Y, Z2,
@@ -130,20 +140,20 @@ def plot_lla_2D_classification(
         norm=norm2,
         rasterized=True
     )
-    cbar2 = fig.colorbar(cf2, ax=ax[1], label=r"$\text{V}[\mathbf{y^*|x^*},\mathcal{D}]$", location="left")
-    cbar2.set_ticks(jnp.linspace(vmin2, vmax2, 2))
-    cbar2.ax.yaxis.set_ticks_position('right')
-    cbar2.ax.yaxis.set_label_position('left')
-    ax[1].set_title("LLA predictive variance")
-    cbars.append(cbar2)
+    if cbar:
+        cbar2 = fig.colorbar(cf2, ax=ax[1], label=r"$\text{V}[\mathbf{y^*|x^*},\mathcal{D}]$", location="left")
+        cbar2.set_ticks(jnp.linspace(vmin2, vmax2, 2))
+        cbar2.ax.yaxis.set_ticks_position('right')
+        cbar2.ax.yaxis.set_label_position('left')
+        ax[1].set_title("LLA predictive variance")
+        cbars.append(cbar2)
 
-
-    for cbari in cbars:
-        axi = cbari.ax
-        for spine in ('top','bottom','left','right'):
-            axi.spines[spine].set_visible(True)
-            axi.spines[spine].set_linewidth(2.0)
-            axi.spines[spine].set_color('#333')
+        for cbari in cbars:
+            axi = cbari.ax
+            for spine in ('top','bottom','left','right'):
+                axi.spines[spine].set_visible(True)
+                axi.spines[spine].set_linewidth(2.0)
+                axi.spines[spine].set_color('#333')
 
     for axi in ax:
         axi.set_xticks([])
@@ -227,7 +237,6 @@ def plot_lla_mean(
         rasterized=True
     )
 
-    
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_xlabel(r"$x_1$")
@@ -327,6 +336,63 @@ def make_predictive_mean_figure(state, Xtrain, ytrain, alpha, num_mc_samples=100
 
     return fig
 
+
+def make_comparison_figure(state, Xtrain, ytrain, Z, alpha, matrix_free, num_mc_samples=100):
+    """
+    Build the 2x1 figure:
+      [ MEAN ]
+      [ VAR  ]
+    and optionally add one shared colorbar on the left.
+    """
+
+    M = Z.shape[0]
+
+    # fig, axs = plt.subplots(1, 2, figsize=(12,5),
+    fig, axs = plt.subplots(2, 1, figsize=(7,11),
+    # fig, axs = plt.subplots(2, 1, figsize=(5.5,11),
+                            sharex=True, 
+                            sharey=True,
+                            constrained_layout=True
+                            )
+
+    plot_lla_2D_classification(
+        fig,
+        axs,
+        state,
+        Xtrain,
+        None,
+        Z,
+        alpha,
+        matrix_free,
+        num_mc_samples,
+        mode="ip_lla",
+        # plot_Z=True,
+        # cbar=False
+    )
+
+    axs[1].set_xlabel(r"$x_1$")
+    for ax in axs:
+        ax.set_xticks([]); ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_color('#333')
+            spine.set_linewidth(1.0)
+        ax.set_ylabel(None)
+
+    # axs[0].set_title(f'{r"$M="}{M}{r"$"}')
+    axs[0].set_title(None)
+    axs[1].set_title(None)
+
+    # plot_binary_classification_data(Xtrain, ytrain.squeeze(), axs[0])
+    # plot_binary_classification_data(Xtrain, ytrain.squeeze(), axs[1])
+    
+    # scatterp(*Z.T, color="yellow", s=200, zorder=8, marker="X", ax=axs[0])
+    # scatterp(*Z.T, color="yellow", s=200, zorder=8, marker="X", ax=axs[1])
+    # fig.subplots_adjust(top=0.85)
+    # fig.suptitle("Predictive mean", fontsize=16)
+
+    return fig, axs
+    
     
 def plot_bc_boundary_contour(map_model_state, tmin, tmax, alpha=0.2, color="black",zorder=5, label=None):
     cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", [color, color])

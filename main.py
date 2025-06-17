@@ -17,7 +17,7 @@ set_style('darkgrid')
 from src.scalemodels import TrainState, EMPTY_STATS
 from src.toymodels import SimpleRegressor, SimpleClassifier
 from src.toydata import get_dataloaders, load_toydata
-from src.nplot import make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
+from src.nplot import make_comparison_figure, make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
 
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
@@ -247,7 +247,11 @@ def main():
                              full_set_size=full_set_size,
                              model_type=model_cfg["type"],
                              num_mc_samples=ip_cfg["mc_samples"],
-                             scalable=True)
+                             scalable=True,
+                             log10_min=-3,
+                             log10_max=1,
+                             n_coarse=16
+                             )
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
@@ -306,12 +310,15 @@ def main():
             ytrain,
             zinducing,
             alpha_ip,
+            key=jax.random.fold_in(jax.random.PRNGKey(seed_inducing), 1),
             mode="full_lla" if args.full else "ip_lla",
             matrix_free=args.scalable,
             num_mc_samples=args.num_mc_samples_lla,
             plot_Z=args.plot_Z,
             plot_X=args.plot_X,
         )
+        for axi in ax:
+            scatterp(*zinducing.T, color="yellow", zorder=8, marker="X", label="Inducing points", ax=axi)
         # pdb.set_trace()
         plt.tight_layout()
         suffix_if_matrixfree = '_mf' if args.scalable else ''
@@ -320,6 +327,31 @@ def main():
         # ! LA vs LLA example plot!
         # make_predictive_mean_figure(map_model_state, xtrain, ytrain, alpha, num_mc_samples=args.num_mc_samples_lla)
         # plt.savefig(f"fig/la_vs_lla.pdf", dpi=300, bbox_inches="tight")
+        
+        # ! XOR varying M plot!
+        # XOR: (32, 2.5e-03), (16, 1.2e-02), (8, 8e-02)
+        # m = 16
+        # alpha = {
+        #     8:  8e-02,
+        #     16: 1.2e-02,
+        #     32: 2.5e-03,
+        #     1000: 1e-3
+        # }[m]
+        # (xtrain,ytrain),*_ = load_toydata(args.dataset)
+        # # zinducing = xtrain
+        # make_comparison_figure(map_model_state, xtrain, zinducing, alpha, matrix_free=False, num_mc_samples=args.num_mc_samples_lla)
+        # plt.savefig(f"fig/xor-evolution-{m}.pdf", dpi=300, bbox_inches="tight")
+        
+        # ! BANANA
+        # mcs   = 10
+        # k     = 80
+        # alpha = 1e-03
+        # (xtrain,ytrain),*_ = load_toydata(args.dataset)
+        # # zinducing = xtrain
+        # make_comparison_figure(map_model_state, xtrain, zinducing, alpha, matrix_free=True, num_mc_samples=mcs)
+        # plt.savefig(f"fig/banana-evolution-{k}-{mcs}.pdf", dpi=300, bbox_inches="tight")
+        
+        
         
         print("[DONE] Visualization complete.")
 

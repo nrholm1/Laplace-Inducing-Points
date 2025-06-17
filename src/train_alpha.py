@@ -10,13 +10,10 @@ from src.lla  import compute_curvature_approx
 from src.utils import count_model_params, flatten_nn_params
 from src.train_map import _eval_classification, _eval_regression, _map_step
 
-# ────────────────────────────────────────────────────────────────────────────
-#   Laplace log-marginal likelihood  (α-dependent part only)
-# ────────────────────────────────────────────────────────────────────────────
 def log_marginal_likelihood(
         alpha: float,
-        X,                    # batch X
-        state,                   # TrainState (flax / haiku)
+        X,
+        state,
         model_type: str,
         full_set_size: int | None = None
 ) -> jnp.ndarray:
@@ -24,15 +21,12 @@ def log_marginal_likelihood(
     N = full_set_size or X.shape[0]
     rescale = N / X.shape[0]
     
-    # parameter count (minus the learned noise var. for regression)
     D = count_model_params(state.params['params'])
     if model_type == "regressor":
         D -= 1
 
-    # ---- curvature pieces --------------------------------------------------
     W, WT = compute_W_vps(state, X, model_type, full_set_size=None)
 
-    # dense   Wᵀ W   (   d × d  , d ≪ D   )
     dummy  = WT(jnp.zeros(D, dtype=float))
     d      = dummy.size
     WTW    = build_WTW(W, WT, dummy.shape, d, dtype=float, block=1)
@@ -41,19 +35,15 @@ def log_marginal_likelihood(
     _, logdet_lowrank = jnp.linalg.slogdet(jnp.eye(d) + rescale / alpha * WTW)
     logdet_term       = logdet_lowrank + D * jnp.log(alpha)
 
-    # ---- Gaussian log-prior (α-dependent part) -----------------------------
+    # Gaussian log-prior
     flat_p, _ = flatten_nn_params(state.params['params'])
     quad      = -0.5 * alpha * jnp.dot(flat_p, flat_p)
-    norm      = 0.5 * D * jnp.log(alpha)     #  −½ D log 2π cancels later
+    norm      = 0.5 * D * jnp.log(alpha)
     log_prior = quad + norm
 
-    # final Laplace evidence (no constant terms in α)
     return log_prior - 0.5 * logdet_term
 
 
-# ────────────────────────────────────────────────────────────────────────────
-#   One Adam step on log α   (no JIT, optax objects aren't pytrees)
-# ────────────────────────────────────────────────────────────────────────────
 def update_alpha(
         log_alpha: jnp.ndarray,
         opt_state: optax.OptState,

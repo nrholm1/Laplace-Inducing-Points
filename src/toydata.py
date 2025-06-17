@@ -208,7 +208,7 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
         plot_data(x,y,dataset_name,plot_binary_classification_data)
     elif dataset_name == 'spiral':
         # reserve 10% of n for the ring (validation)
-        n_val      = int(0.05 * n)
+        n_val      = int(0.00 * n)
         n_spiral   = n - n_val
         k1, k2     = jax.random.split(key, 2)
 
@@ -224,6 +224,13 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
         x = jnp.concatenate([x_sp, x_rg], axis=0)
         y = jnp.concatenate([y_sp, y_rg], axis=0)
         plot_data(x, y, dataset_name, plot_binary_classification_data)
+    elif dataset_name == 'ring':
+        x, y = ring_dataset(n,
+                                  key,
+                                  radius=2.,
+                                  width=0.15,
+                                  noise=noise)
+        plot_data(x,y,dataset_name,plot_binary_classification_data)
     elif dataset_name == 'sine':
         x, y = sine_wave_dataset(n, key, noise, split_in_middle=split_in_middle)
         plot_data(x,y,dataset_name,plot_regression_data)

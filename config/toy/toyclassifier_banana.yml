@@ -1,25 +1,25 @@
 model:
-  num_h: 16
-  num_l: 3
-  num_c: 2
-  name: classifier
-  type: classifier
-  seed: 12345
+  num_h:                 16
+  num_l:                 3
+  num_c:                 2
+  name:                  classifier
+  type:                  classifier
+  seed:                  12345
 optimization:
-  full_set_size: 450 # ! remember to set
-  alpha: 0.005
+  full_set_size:         450 # ! remember to set
+  alpha:                 2.5e-03 # 0.005
   map:
-    batch_size: 32
-    epochs: 250
-    lr: 0.005
-    seed: 127831678241
+    batch_size:          32
+    epochs:              250
+    lr:                  0.005
+    seed:                127831678241
   ip:
-    m: 55
-    batch_size: 128
-    epochs: 500
-    lr: 0.01
-    mc_samples: 50
-    seed: 4231553
-    st_samples: 64
-    slq_samples: 1
-    slq_num_matvecs: 45
+    m:                   40
+    batch_size:          64
+    epochs:              500
+    lr:                  0.01
+    mc_samples:          1000
+    seed:                42315531
+    st_samples:          256
+    slq_samples:         1
+    slq_num_matvecs:     40
