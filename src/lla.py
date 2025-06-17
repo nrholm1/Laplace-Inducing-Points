@@ -143,7 +143,8 @@ def predict_lla_scalable(map_state, Xnew, Z, model_type, alpha, key=None, full_s
             mu_batched = map_state.apply_fn(p, x, return_logvar=False)
         else:
             # mu_batched = map_state.apply_fn(p, x, train=False, mutable=False)
-            vars_in = {"params": p['params'], "batch_stats": map_state.batch_stats}
+            # vars_in = {"params": p['params'], "batch_stats": map_state.batch_stats}
+            vars_in = {"params": p, "batch_stats": map_state.batch_stats}
             mu_batched = map_state.apply_fn(vars_in, x, train=False, mutable=False)
         return mu_batched
     fmu = model_fun(flat_params, Xnew)

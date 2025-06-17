@@ -45,9 +45,10 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
             return state.apply_fn(p_unr, zi, return_logvar=False)
         else:
             variables = {
-                'params': p_unr['params'],
+                'params': p_unr,#['params'],
                 'batch_stats': state.batch_stats
             }
+            # pdb.set_trace()
             return state.apply_fn(variables, zi, train=False, mutable=False)
 
     def WT_per_point(i,v):
@@ -116,7 +117,7 @@ def compute_ggn_vp(state, Z, model_type, full_set_size=None):
         if model_type == "regressor": return state.apply_fn(p_unr, zi, return_logvar=False)
         else: 
             variables = {
-                'params': p_unr['params'],
+                'params': p_unr,#['params'],
                 'batch_stats': state.batch_stats
             }
             return state.apply_fn(variables, zi, train=False, mutable=False)
@@ -217,6 +218,7 @@ def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
 
     WTW = jax.lax.fori_loop(0, n_full, body, WTW)
 
+    # Tail slice, checkpointed
     if tail:
         start  = n_full * block
         cols_t = col_block(start, tail).T    # (d, tail)
