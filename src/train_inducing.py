@@ -19,7 +19,7 @@ from src.ggn import build_WTWz, compute_W_vps, build_WTW
 from src.utils import count_model_params
 from src.toydata import plot_binary_classification_data
 from src.data import make_iter
-from src.nplot import scatterp, plot_grayscale
+from src.nplot import plot_color, scatterp, plot_grayscale
 
 
 
@@ -99,7 +99,8 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     alpha_inv = 1.0 / alpha
     beta_inv = 1.0 / beta
     
-    D = count_model_params(state.params['params'])
+    # D = count_model_params(state.params['params'])
+    D = count_model_params(state.params)
     if model_type == 'regressor':
         D -= 1 # ! subtract logvar parameter!
     
@@ -295,6 +296,9 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             if plot_type in ['mnist', 'fmnist']:
                 plot_grayscale(z_np[:32].squeeze(), step, name=plot_type)
             
+            elif plot_type in ['cifar10']:
+                plot_color(z_np[:32].squeeze(), step, name=plot_type)
+                
             elif plot_type in ['spiral', 'xor', 'banana']:
                 trajectory.append(z_np)
 

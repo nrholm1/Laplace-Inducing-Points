@@ -6,20 +6,20 @@ optimization:
   alpha:                 0.005
   full_set_size:         60_000
   map:
-    batch_size:          256
-    epochs:              50
-    lr:                  0.005
-    seed:                32132132
-  ip:
-    m:                   300
     lr:                  0.0005
-    seed:                280300
-    epochs:              500
+    seed:                32132132
+    epochs:              150
     batch_size:          256
-    mc_samples:          100
-    st_samples:          300
-    slq_samples:         -1
-    slq_num_matvecs:     -1
+  ip:
+    m:                   100
+    lr:                  0.008
+    seed:                280300
+    epochs:              250
+    batch_size:          128
+    mc_samples:          200
+    st_samples:          256
+    slq_samples:         1
+    slq_num_matvecs:     200
 sampling:
     mc_samples:          100
     invsqrt_num_matvecs: 128

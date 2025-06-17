@@ -12,15 +12,15 @@ optimization:
     epochs:              75
     batch_size:          256
   ip:
-    m:                   50
+    m:                   100
     lr:                  0.005
     seed:                280300
-    epochs:              100
+    epochs:              90
     batch_size:          32
     mc_samples:          200
-    st_samples:          36
+    st_samples:          24
     slq_samples:         1
-    slq_num_matvecs:     36
+    slq_num_matvecs:     16
 sampling:
     mc_samples:          100
     invsqrt_num_matvecs: 128

@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import pdb
 
@@ -70,11 +71,19 @@ def main():
     variables = model.init(rng_model, dummy_inp, train=True)
     
     # Build train_state for MAP
-    optimizer_map = optax.adam(lr_map)
+    steps_per_epoch = math.ceil(full_set_size / map_batch_size)
+    total_steps = epochs_map * steps_per_epoch
+    lr_schedule = optax.cosine_decay_schedule(
+        init_value=lr_map,
+        decay_steps=total_steps,
+        alpha=0.08 * lr_map       # final LR = alpha * init_value; here 0
+    )
+    optimizer_map = optax.adam(learning_rate=lr_schedule)
+    # optimizer_map = optax.adam(lr_map)
     # model_state = train_state.TrainState.create(
     model_state = TrainState.create(
         apply_fn=model.apply,
-        params=variables,
+        params=variables['params'],
         tx=optimizer_map,
         batch_stats = variables.get('batch_stats', EMPTY_STATS),
     )
@@ -140,9 +149,9 @@ def main():
     
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_inducing = jax.random.PRNGKey(seed_inducing)
-    train_loader_init, *_ = get_dataloaders(args.dataset, m_inducing)
+    train_loader_init, *_ = get_dataloaders(args.dataset, m_inducing, aug=False)
     zinit = next(iter(train_loader_init))[0] # Init IP from training data sample
-    train_loader_induc, _, val_loader = get_dataloaders(args.dataset, inducing_batch_size)
+    train_loader_induc, _, val_loader = get_dataloaders(args.dataset, inducing_batch_size, aug=False)
     
     alpha_ip = args.alpha_ip
     if alpha_ip is None:
@@ -153,9 +162,9 @@ def main():
                              model_type=model_cfg["type"],
                              num_mc_samples=ip_cfg["mc_samples"],
                              scalable=True,
-                             log10_min=4,
-                             log10_max=5,
-                             n_coarse=7,)
+                             log10_min=1,
+                             log10_max=3,
+                             n_coarse=16,)
 
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)

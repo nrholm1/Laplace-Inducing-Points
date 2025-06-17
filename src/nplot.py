@@ -442,8 +442,7 @@ def plot_cinterval(x, mu, sigma, color='orange', *args, zorder=1, text=None, **k
     
 def plot_grayscale(batch, step='', name=''):
     """
-    Plot a batch of 32 MNIST digits (shape: [32, 28, 28]) 
-    and save to 'test.png'.
+    Plot a batch of 32 MNIST digits (shape: [32, 28, 28]).
     """
     # convert JAX array to NumPy (for matplotlib)
     imgs = np.array(batch)
@@ -461,3 +460,34 @@ def plot_grayscale(batch, step='', name=''):
     # save to PDF
     fig.savefig(f'fig/test/{name}_{step}.png', bbox_inches='tight', pad_inches=0)
     plt.close(fig)
+
+def plot_color(batch, step='', name=''):
+    """
+    Plot a batch of 32 RGB images (shape: [32, H, W, 3]).
+    """
+    # convert JAX array (or any array‐like) to NumPy
+    imgs = np.array(batch)
+    assert imgs.ndim == 4 and imgs.shape[0] == 32 and imgs.shape[-1] == 3, (
+        f"Expected batch shape (32, H, W, 3), got {imgs.shape}"
+    )
+    # compute grid size
+    nrows, ncols = 4, 8
+    
+    fig, axes = plt.subplots(
+        nrows=nrows, ncols=ncols, figsize=(ncols, nrows),
+        gridspec_kw={'wspace': 0.1, 'hspace': 0.1}
+    )
+    
+    for i, ax in enumerate(axes.flatten()):
+        # clip to [0,1] or [0,255] depending on data range
+        img = imgs[i]
+        if img.max() > 1.0:
+            img = img.astype(np.uint8)
+        ax.imshow(img, interpolation='nearest')
+        ax.axis('off')
+    
+    # ensure output directory exists
+    out_path = f'fig/test/{name}_{step}.png'
+    fig.savefig(out_path, bbox_inches='tight', pad_inches=0)
+    plt.close(fig)
+    print(f"Saved color grid to {out_path}")

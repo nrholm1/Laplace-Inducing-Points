@@ -37,7 +37,8 @@ def _nl_prior(params: FrozenDict,
 
 #  Model wrapper that handles BatchNorm collections
 def _apply_model(state: TrainState, x, *, train: bool):
-    vars_in = {"params": state.params['params'], "batch_stats": state.batch_stats}
+    # vars_in = {"params": state.params['params'], "batch_stats": state.batch_stats}
+    vars_in = {"params": state.params, "batch_stats": state.batch_stats}
     if train:
         y, new_vars = state.apply_fn(vars_in, x, train=True,
                                        mutable=["batch_stats"])
@@ -124,7 +125,7 @@ def train_map(state: TrainState,
             state, train_loss = _map_step(state, batch, model_type, alpha)
 
         # ── evaluation every 4 epochs ──────────────────────────────
-        if epoch % 4 == 0:
+        if epoch % 1 == 0:
             test_loss = 0.0
             test_acc  = 0.0
             for batch in make_iter(test_loader):
