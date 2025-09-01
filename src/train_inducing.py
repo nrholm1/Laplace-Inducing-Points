@@ -12,7 +12,7 @@ from tqdm import tqdm
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
 from src.matfree_monkeypatch import integrand_funm_sym_logdet
 
-from src.stochtrace import hutchpp_v2
+from src.stochtrace import hutchpp
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
 from src.ggn import build_WTWz, compute_W_vps, build_WTW
 # from src.train_map import nl_likelihood_fun_regression
@@ -70,7 +70,7 @@ def og_objective(Z, X, Y, state, alpha, model_type, key, full_set_size=None, num
     st_sampler =  lambda _: probes
     slq_sampler = lambda _: probes[:slq_samples]
     
-    stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler, s1=st_samples-16, s2=16)
+    stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-16, s2=16)
     # trace_term = alpha*stoch_trace(Sz_inv_vp_woodbury_dense)
     def composite_vp(v):
         return S_vp(Sz_inv_vp_woodbury_dense(v))
@@ -229,7 +229,7 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     st_sampler =  lambda _: probes
     slq_sampler = lambda _: probes[:slq_samples]
     
-    stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler, s1=st_samples-16, s2=16)
+    stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-16, s2=16)
     trace_term = stoch_trace(composite_vp)
     
     # ! use stochastic Lanczos quadrature
