@@ -30,7 +30,7 @@ def nll(yhat: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
         return -jnp.mean(jnp.sum(y * logp, axis=-1))
 
 
-def og_objective(Z, X, Y, state, alpha, model_type, key, full_set_size=None, num_mc_samples=1, st_samples=256, slq_samples=2, slq_num_matvecs=None):
+def direct_elbo_objective(Z, X, Y, state, alpha, model_type, key, full_set_size=None, num_mc_samples=1, st_samples=256, slq_samples=2, slq_num_matvecs=None):
     N = full_set_size
     M = Z.shape[0]
     beta = N / M
@@ -102,7 +102,7 @@ def og_objective(Z, X, Y, state, alpha, model_type, key, full_set_size=None, num
     
 
 
-def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set_size=None,
+def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
                                    st_samples=256, slq_samples=2, slq_num_matvecs=None):
     """ MATRIX FREE
     =========================================
@@ -118,7 +118,7 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     
     D = count_model_params(state.params)
     if model_type == 'regressor':
-        D -= 1 # ! subtract logvar parameter!
+        D -= 1 # subtract logvar parameter!
     
     # compute matrix free linear operator oracles
     S_vp  = compute_curvature_approx(
@@ -127,7 +127,6 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     W, WT = compute_W_vps(
         state, Z, model_type=model_type, 
         full_set_size=None)
-    
     
     dummy = WT(jnp.zeros(D))
     inner_shape = dummy.shape
@@ -179,7 +178,7 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     return logdet_term + trace_term
 
 
-def alternative_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
+def ip_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
     """
     =========================================
     Compute KL[ q(theta|Z) || p(theta|data) ]
@@ -198,9 +197,9 @@ def alternative_objective_dense(Z, X, state, alpha, model_type, key, full_set_si
     return logdet_term + trace_term
 
 
-variational_grad_dense = jax.value_and_grad(alternative_objective_dense)
-variational_grad_scalable = jax.value_and_grad(alternative_objective_scalable)
-variational_grad_og = jax.value_and_grad(og_objective)
+variational_grad_dense = jax.value_and_grad(ip_objective_dense)
+variational_grad_scalable = jax.value_and_grad(ip_objective_mf)
+variational_grad_og = jax.value_and_grad(direct_elbo_objective)
 
 
 @partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size', 'scalable', 'st_samples', 'slq_samples', 'slq_num_matvecs'))
@@ -296,7 +295,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         z, opt_state, loss = optimize_step(
             z, 
             x_sample,
-            # Y=y_sample,
+            # Y=y_sample, # ! IMPORTANT: if this is uncommented, we use the original direct (and bad) ELBO formulation
             map_model_state=map_model_state, 
             alpha=alpha, 
             opt_state=opt_state, 
