@@ -18,20 +18,20 @@ import seaborn as sns
 from src.lla import predict_la_samples_dense, predict_lla_dense, predict_lla_scalable
 
 sns.set_style('darkgrid')
-mpl.rcParams.update({
-    "text.usetex": True,                     # hand off all text to LaTeX
-    "font.family": "serif",                  # use a serif face
-    "font.serif": ["Computer Modern Roman"], # explicitly point to the CM font
-    "text.latex.preamble":
-        r"\usepackage[T1]{fontenc}"+         # proper font encoding
-        r"\usepackage{lmodern}" +            # if your doc uses Latin Modern
-        r"\usepackage{amsmath}"             # for \text{…} inside math
-    ,
-    "pdf.fonttype": 42,                      # embed Type-42 (TrueType) fonts in PDF
-    "ps.fonttype": 42,
-    # "font.size":  22, # 15
-    "font.size":  15
-})
+# mpl.rcParams.update({
+#     "text.usetex": True,                     # hand off all text to LaTeX
+#     "font.family": "serif",                  # use a serif face
+#     "font.serif": ["Computer Modern Roman"], # explicitly point to the CM font
+#     "text.latex.preamble":
+#         r"\usepackage[T1]{fontenc}"+         # proper font encoding
+#         r"\usepackage{lmodern}" +            # if your doc uses Latin Modern
+#         r"\usepackage{amsmath}"             # for \text{…} inside math
+#     ,
+#     "pdf.fonttype": 42,                      # embed Type-42 (TrueType) fonts in PDF
+#     "ps.fonttype": 42,
+#     # "font.size":  22, # 15
+#     "font.size":  15
+# })
 
 class Colors(str, Enum):
     paleblue = '#8888FF'

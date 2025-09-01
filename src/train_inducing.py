@@ -313,7 +313,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
         
         # todo for debug: every 2 steps, record & plot
-        if (plot_type is not None) and (step % 10 == 0):
+        if (plot_type is not None) and (step % 2 == 0):
             z_np = np.asarray(z)
             
             if plot_type in ['mnist', 'fmnist']:
@@ -328,29 +328,30 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
                 traj = np.stack(trajectory)    # shape (n_points, 2)
                 ax.clear()
                 ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
-                # ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
-                # ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
+                ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
+                ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
                 ax.set_xlabel('z[0]')
                 ax.set_ylabel('z[1]')
                 ax.set_title(f'Inducing Point Trajectory after {step} steps')
-                # scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+                scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
 
-                plot_lla_2D_classification_single(
-                    fig, ax, map_model_state,
-                    dataset_sample[0],
-                    dataset_sample[1].squeeze(),
-                    z_np,
-                    alpha,
-                    matrix_free=True,
-                    num_mc_samples=500,
-                    mode='ip_lla',
-                    key=rng,
-                    plot_Z=True,
-                    # plot_X=True,
-                    cbar=False
-                )
+                # ! uncomment for backdrop (expensive)
+                # plot_lla_2D_classification_single(
+                #     fig, ax, map_model_state,
+                #     dataset_sample[0],
+                #     dataset_sample[1].squeeze(),
+                #     z_np,
+                #     alpha,
+                #     matrix_free=True,
+                #     num_mc_samples=500,
+                #     mode='ip_lla',
+                #     key=rng,
+                #     plot_Z=True,
+                #     # plot_X=True,
+                #     cbar=False
+                # )
 
-                # plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
+                plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
                 
                 # force a draw
                 fig.canvas.draw()
