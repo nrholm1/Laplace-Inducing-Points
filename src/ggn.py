@@ -272,6 +272,7 @@ def compute_ggn_vp(state, Z, model_type, full_set_size=None):
         elif model_type == "regressor": ... # closed form MSE - handled later on, since it reduces to a global scalar coefficient
         return u
     
+    # ? This block is the old method to obtain the GGN-vector-product
     # def ggn_vp(v):
     #     nonlocal recal_term
     #     total = jnp.zeros_like(flat_params)
@@ -285,28 +286,22 @@ def compute_ggn_vp(state, Z, model_type, full_set_size=None):
     #         return acc + vjp_fn(hv)[0]
     #     return jax.lax.fori_loop(0, M, body_fun, total) * recal_term
             
+    # ? This block is the new equivalent method, which uses built-in JAX ops to linearize and transpose - might get some speedup in some cases.
     def ggn_vp(v):
-        nonlocal recal_term                      # any prefactors you need
-        total = jnp.zeros_like(flat_params)      # accumulator
+        nonlocal recal_term
+        total = jnp.zeros_like(flat_params)
 
         def body_fun(i, acc):
             zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-
             def fzi(p):
                 return model_fun(p, zi).squeeze()
-
             f_val, lin_fun = jax.linearize(fzi, flat_params)
-
             jvp_out = lin_fun(v)
-
             hv = H_action(f_val,
                         jvp_out)
-
             jt_fun   = jax.linear_transpose(lin_fun, v)
             jt_hv, = jt_fun(hv)
-
             return acc + jt_hv
-
         return jax.lax.fori_loop(0, M, body_fun, total) * recal_term    
         
     return ggn_vp
