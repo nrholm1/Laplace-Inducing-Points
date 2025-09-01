@@ -113,11 +113,9 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     M = Z.shape[0]
     K = X.shape[0]
     beta = N / M
-    gamma = N / K
     alpha_inv = 1.0 / alpha
     beta_inv = 1.0 / beta
     
-    # D = count_model_params(state.params['params'])
     D = count_model_params(state.params)
     if model_type == 'regressor':
         D -= 1 # ! subtract logvar parameter!
@@ -126,41 +124,28 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     S_vp  = compute_curvature_approx(
         state, X, alpha=alpha, model_type=model_type, 
         full_set_size=N)
-    Sz_vp = compute_curvature_approx(
-        state, Z, alpha=alpha, model_type=model_type, 
-        full_set_size=N)
-    Wz, WzT = compute_W_vps(
+    W, WT = compute_W_vps(
         state, Z, model_type=model_type, 
         full_set_size=None)
-    # W, WT = compute_W_vps(
-    #     state, X, model_type=model_type, 
-    #     full_set_size=None)
     
     
-    dummy = WzT(jnp.zeros(D))
+    dummy = WT(jnp.zeros(D))
     inner_shape = dummy.shape
     d_z           = dummy.size
     I_d_z         = jnp.eye(d_z, dtype=float)
-    WzTWz = build_WTW(Wz, WzT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
+    WTW = build_WTW(W, WT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
     def Sz_inv_vp_woodbury_dense(v):
-        u = WzT(v).reshape(d_z)
+        u = WT(v).reshape(d_z)
         x   = jax.scipy.linalg.solve(
-            beta_inv*I_d_z + alpha_inv*WzTWz,
+            beta_inv*I_d_z + alpha_inv*WTW,
             u)
-        return alpha_inv*v - alpha_inv**2*Wz(x.reshape(inner_shape))
+        return alpha_inv*v - alpha_inv**2*W(x.reshape(inner_shape))
     
-    def Sz_inv_vp_woodbury_cg(v):
-        u = WzT(v).reshape(d_z)
-        def A(x):
-            return beta_inv * x + alpha_inv * (WzTWz @ x)
-        x, _ = jax.scipy.sparse.linalg.cg(A, u, maxiter=10)
-        return alpha_inv * v - alpha_inv**2 * Wz(x.reshape(inner_shape))
     
     def composite_vp(v):
-        # return S_vp(Sz_inv_vp_woodbury_cg(v))
         return S_vp(Sz_inv_vp_woodbury_dense(v))
     
-    # # ! use same random vectors for StochTrace and SLQ
+    # Use same random vector probes for StochTrace and SLQ
     x0 = jnp.ones((D,), dtype=float)
     sampler = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
     probes = sampler(key)
@@ -170,15 +155,11 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
     stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-16, s2=16)
     trace_term = stoch_trace(composite_vp)
     
-    # ! use stochastic Lanczos quadrature
+    # SLQ
     slq_num_matvecs = slq_num_matvecs if slq_num_matvecs is not None else int(M*0.8)
     def slq_logdet(Xfun):
-        # Adapted directly from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        # Old tridiagonal formulation:
-        # tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
-        # problem = integrand_funm_sym_logdet(tridiag_sym)
-        
-        # New bidiagonal reformulation:
+        # Adapted from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
+        # BUT using bidiagonal reformulation. See paper/thesis for details.
         bidiag_sym = decomp.bidiag(slq_num_matvecs)
         problem = funm.integrand_funm_product_logdet(bidiag_sym)
         
@@ -187,11 +168,10 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
         keys = jax.random.split(key, slq_samples)
         logdets = jax.lax.map(jax.checkpoint(estimate),keys)
         return logdets.mean()
-    # logdet_term = slq_logdet(Sz_vp)
                           
     sqrt_alpha = jnp.sqrt(alpha)
     def bidiag_target(v):
-        x, unravel_fn = jax.flatten_util.ravel_pytree(WzT(v))
+        x, unravel_fn = jax.flatten_util.ravel_pytree(WT(v))
         return jnp.concatenate([sqrt_alpha * v, x])
 
     logdet_term = slq_logdet(bidiag_target)
