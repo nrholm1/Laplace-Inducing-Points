@@ -14,7 +14,7 @@ from src.matfree_monkeypatch import integrand_funm_sym_logdet
 
 from src.stochtrace import hutchpp
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
-from src.ggn import build_WTWz, compute_W_vps, build_WTW
+from src.ggn import compute_W_vps, build_WTW
 # from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params, flatten_nn_params
 from src.toydata import plot_binary_classification_data
@@ -100,68 +100,6 @@ def og_objective(Z, X, Y, state, alpha, model_type, key, full_set_size=None, num
 
     
     
-
-
-
-def alternative_objective_scalable_exact(Z, X, state, alpha, model_type, key, full_set_size=None,
-                                   st_samples=256, slq_samples=2, slq_num_matvecs=None):
-    """ MATRIX FREE
-    =========================================
-    Compute KL[ q(theta|Z) || q(theta|data) ]
-    =========================================
-    """
-    N = full_set_size
-    M = Z.shape[0]
-    K = X.shape[0]
-    beta = N / M
-    gamma = N / K
-    alpha_inv = 1.0 / alpha
-    beta_inv = 1.0 / beta
-    
-    D = count_model_params(state.params['params'])
-    if model_type == 'regressor':
-        D -= 1 # ! subtract logvar parameter!
-    
-    # compute matrix free linear operator oracles
-    S_vp  = compute_curvature_approx(
-        state, X, alpha=alpha, model_type=model_type, 
-        full_set_size=N)
-    Sz_vp = compute_curvature_approx(
-        state, Z, alpha=alpha, model_type=model_type, 
-        full_set_size=N)
-    Wz, WzT = compute_W_vps(
-        state, Z, model_type=model_type, 
-        full_set_size=None)
-    W, WT = compute_W_vps(
-        state, X, model_type=model_type, 
-        full_set_size=None)
-    
-    
-    
-    # pdb.set_trace()
-    dummy = WzT(jnp.zeros(D))
-    inner_shape = dummy.shape
-    d_z           = dummy.size
-    I_d_z         = jnp.eye(d_z, dtype=float)
-    WzTWz = build_WTW(Wz, WzT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
-    
-    _,logdet_WTW = jnp.linalg.slogdet(I_d_z + beta*alpha_inv*WzTWz)
-    logdet_term = logdet_WTW + D*jnp.log(alpha) # ! drop last term since it does not matter for optimization
-
-    dummy = WT(jnp.zeros(D))
-    d           = dummy.size
-    WTWz = build_WTWz(WT, Wz, inner_shape, d=d, dtype=float, block=1)
-    
-    M  = beta_inv*I_d_z + alpha_inv*WzTWz
-    L  = jnp.linalg.cholesky(M)
-    S1 = jax.scipy.linalg.cho_solve((L, True), WzTWz)
-    S2 = jax.scipy.linalg.cho_solve((L, True), WTWz.T)
-    
-    trace1 = jnp.linalg.trace(S1)
-    trace2 = jnp.vdot(WTWz, S2.T)
-    trace_term = - alpha_inv*trace1 - gamma*alpha_inv**2*trace2
-    
-    return logdet_term + trace_term
 
 
 def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set_size=None,
