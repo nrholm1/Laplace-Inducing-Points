@@ -12,14 +12,94 @@ from tqdm import tqdm
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
 from src.matfree_monkeypatch import integrand_funm_sym_logdet
 
-from src.stochtrace import hutchpp, hutchpp_v2
-from src.lla import posterior_lla_dense, compute_curvature_approx_dense, compute_curvature_approx
+from src.stochtrace import hutchpp_v2
+from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
 from src.ggn import build_WTWz, compute_W_vps, build_WTW
 # from src.train_map import nl_likelihood_fun_regression
-from src.utils import count_model_params
+from src.utils import count_model_params, flatten_nn_params
 from src.toydata import plot_binary_classification_data
 from src.data import make_iter
-from src.nplot import plot_color, scatterp, plot_grayscale
+from src.nplot import plot_color, scatterp, plot_grayscale, plot_lla_2D_classification_single
+
+
+def nll(yhat: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+    if y.ndim == 1 or y.shape[-1] == 1:  # regression
+        return 0.5 * jnp.mean((yhat.squeeze() - y.squeeze()) ** 2)
+    else:  # multi‑class classification (one‑hot ``y``)
+        logp = jax.nn.log_softmax(yhat, axis=-1)
+        return -jnp.mean(jnp.sum(y * logp, axis=-1))
+
+
+def og_objective(Z, X, Y, state, alpha, model_type, key, full_set_size=None, num_mc_samples=1, st_samples=256, slq_samples=2, slq_num_matvecs=None):
+    N = full_set_size
+    M = Z.shape[0]
+    beta = N / M
+    alpha_inv = 1.0 / alpha
+    beta_inv = 1.0 / beta
+    
+    D = count_model_params(state.params)
+    if model_type == 'regressor':
+        D -= 1 # ! subtract logvar parameter!
+    
+    yhat = predict_lla_scalable(state, X, Z, model_type, alpha, key=key, full_set_size=None, num_samples=num_mc_samples)
+    loss = jnp.mean(jax.vmap(lambda yhat_single: nll(yhat_single, jax.nn.one_hot(Y, num_classes=yhat.shape[2])), in_axes=0)(yhat))
+    
+    S_vp  = compute_curvature_approx(
+        state, X, alpha=alpha, model_type=model_type, 
+        full_set_size=N)
+    Wz, WzT = compute_W_vps(
+        state, Z, model_type=model_type, 
+        full_set_size=None)
+    
+    dummy = WzT(jnp.zeros(D))
+    inner_shape = dummy.shape
+    d_z           = dummy.size
+    I_d_z         = jnp.eye(d_z, dtype=float)
+    WzTWz = build_WTW(Wz, WzT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
+    def Sz_inv_vp_woodbury_dense(v):
+        u = WzT(v).reshape(d_z)
+        x   = jax.scipy.linalg.solve(
+            beta_inv*I_d_z + alpha_inv*WzTWz,
+            u)
+        return alpha_inv*v - alpha_inv**2*Wz(x.reshape(inner_shape))
+    
+    
+    x0 = jnp.ones((D,), dtype=float)
+    sampler = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
+    probes = sampler(key)
+    st_sampler =  lambda _: probes
+    slq_sampler = lambda _: probes[:slq_samples]
+    
+    stoch_trace = lambda vp: hutchpp_v2(vp, st_sampler, s1=st_samples-16, s2=16)
+    # trace_term = alpha*stoch_trace(Sz_inv_vp_woodbury_dense)
+    def composite_vp(v):
+        return S_vp(Sz_inv_vp_woodbury_dense(v))
+    trace_term = stoch_trace(composite_vp)
+    
+    # ! SLQ
+    slq_num_matvecs = slq_num_matvecs if slq_num_matvecs is not None else int(M*0.8)
+    def slq_logdet(Xfun):
+        bidiag_sym = decomp.bidiag(slq_num_matvecs)
+        problem = funm.integrand_funm_product_logdet(bidiag_sym)
+        
+        estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
+        estimate = partial(estimator, Xfun)
+        keys = jax.random.split(key, slq_samples)
+        logdets = jax.lax.map(jax.checkpoint(estimate),keys)
+        return logdets.mean()
+                          
+    sqrt_alpha = jnp.sqrt(alpha)
+    sqrt_beta  = jnp.sqrt(beta)
+    def bidiag_target(v):
+        x, unravel_fn = jax.flatten_util.ravel_pytree(WzT(v))
+        return jnp.concatenate([sqrt_alpha * v, x])
+
+    logdet_term = slq_logdet(bidiag_target)
+    
+    return logdet_term + trace_term
+
+    
+    
 
 
 
@@ -131,7 +211,15 @@ def alternative_objective_scalable(Z, X, state, alpha, model_type, key, full_set
             u)
         return alpha_inv*v - alpha_inv**2*Wz(x.reshape(inner_shape))
     
+    def Sz_inv_vp_woodbury_cg(v):
+        u = WzT(v).reshape(d_z)
+        def A(x):
+            return beta_inv * x + alpha_inv * (WzTWz @ x)
+        x, _ = jax.scipy.sparse.linalg.cg(A, u, maxiter=10)
+        return alpha_inv * v - alpha_inv**2 * Wz(x.reshape(inner_shape))
+    
     def composite_vp(v):
+        # return S_vp(Sz_inv_vp_woodbury_cg(v))
         return S_vp(Sz_inv_vp_woodbury_dense(v))
     
     # # ! use same random vectors for StochTrace and SLQ
@@ -194,12 +282,29 @@ def alternative_objective_dense(Z, X, state, alpha, model_type, key, full_set_si
 
 variational_grad_dense = jax.value_and_grad(alternative_objective_dense)
 variational_grad_scalable = jax.value_and_grad(alternative_objective_scalable)
+variational_grad_og = jax.value_and_grad(og_objective)
 
 
 @partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size', 'scalable', 'st_samples', 'slq_samples', 'slq_num_matvecs'))
-def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, full_set_size=None, scalable=True,
+def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, Y=None, full_set_size=None, scalable=True,
                   st_samples=256, slq_samples=2, slq_num_matvecs=None):
-    if scalable:
+    if Y is not None:
+        grad_fun = variational_grad_og
+        loss, grads = grad_fun(
+            Z, 
+            X, 
+            Y,
+            map_model_state, 
+            alpha, 
+            key=rng,
+            num_mc_samples=num_mc_samples,
+            model_type=model_type, 
+            full_set_size=full_set_size,
+            st_samples=st_samples, 
+            slq_samples=slq_samples, 
+            slq_num_matvecs=slq_num_matvecs
+        )
+    elif scalable:
         grad_fun = variational_grad_scalable
         loss, grads = grad_fun(
             Z, 
@@ -254,7 +359,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         return sample
     
     if plot_type in ['spiral', 'xor', 'banana']:
-        fig, ax = plt.subplots(figsize=(12, 8))
+        fig, ax = plt.subplots(figsize=(10, 8))
         trajectory = [] 
         dataset_sample = get_next_sample(num_batches=32)[0]
         lb = dataset_sample.min(axis=0)
@@ -272,7 +377,8 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         
         z, opt_state, loss = optimize_step(
             z, 
-            x_sample, 
+            x_sample,
+            # Y=y_sample,
             map_model_state=map_model_state, 
             alpha=alpha, 
             opt_state=opt_state, 
@@ -290,7 +396,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
         
         # todo for debug: every 2 steps, record & plot
-        if (plot_type is not None) and (step % 4 == 0):
+        if (plot_type is not None) and (step % 10 == 0):
             z_np = np.asarray(z)
             
             if plot_type in ['mnist', 'fmnist']:
@@ -305,17 +411,34 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
                 traj = np.stack(trajectory)    # shape (n_points, 2)
                 ax.clear()
                 ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
-                ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
-                ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
+                # ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
+                # ax.set_ylim(lb[1] - 1.0, ub[1] + 1.0)
                 ax.set_xlabel('z[0]')
                 ax.set_ylabel('z[1]')
                 ax.set_title(f'Inducing Point Trajectory after {step} steps')
-                scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
-                plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
+                # scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+
+                plot_lla_2D_classification_single(
+                    fig, ax, map_model_state,
+                    dataset_sample[0],
+                    dataset_sample[1].squeeze(),
+                    z_np,
+                    alpha,
+                    matrix_free=True,
+                    num_mc_samples=500,
+                    mode='ip_lla',
+                    key=rng,
+                    plot_Z=True,
+                    # plot_X=True,
+                    cbar=False
+                )
+
+                # plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
                 
                 # force a draw
                 fig.canvas.draw()
                 fig.canvas.flush_events()
+                # plt.savefig(f"fig/toy/ips_{step}.png")
                 plt.savefig(f"fig/toy/ips.png")
                 
                 trajectory = trajectory[-3:]

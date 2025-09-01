@@ -29,7 +29,8 @@ mpl.rcParams.update({
     ,
     "pdf.fonttype": 42,                      # embed Type-42 (TrueType) fonts in PDF
     "ps.fonttype": 42,
-    "font.size":  22, # 15
+    # "font.size":  22, # 15
+    "font.size":  15
 })
 
 class Colors(str, Enum):
@@ -52,6 +53,98 @@ def plot_binary_classification_data(x,y,ax=plt, c1='salmon', c2=Colors.paleblue)
     scatterp(*x[y==1].T, label='Class 1', color=c2, zorder=2, ax=ax)
 
 
+def plot_lla_2D_classification_single(
+        fig,
+        ax,
+        state,
+        Xtrain,
+        ytrain,
+        Z,
+        alpha,
+        matrix_free: bool,
+        num_mc_samples: int,
+        mode: str,
+        key,
+        plot_Z: bool = False,
+        plot_X: bool = False, 
+        cbar: bool = True
+    ):
+    assert mode in {"ip_lla", "full_lla"}, "Please select a mode. Options = [ip, full]"
+    
+    N = Xtrain.shape[0]
+    tmin, tmax = Z.min() - 1.0, Z.max() + 1.0
+    t = jnp.linspace(tmin, tmax, 150)
+    X, Y = jnp.meshgrid(t, t, indexing="ij")
+    pts = jnp.stack([X.ravel(), Y.ravel()], axis=-1)
+    
+    if matrix_free:
+        logit_samples = predict_lla_scalable(
+            state,
+            pts,
+            Xtrain if mode=="full_lla" else Z,
+            model_type="classifier",
+            alpha=alpha,
+            full_set_size=N,
+            num_samples=num_mc_samples
+        )
+    else:
+        logit_dist = predict_lla_dense(
+            state, 
+            pts,
+            Xtrain if mode=="full_lla" else Z,
+            model_type="classifier",
+            alpha=alpha,
+            full_set_size=N
+        )
+        logit_samples = logit_dist.sample(seed=key, sample_shape=(num_mc_samples,))
+        # logit_samples = logit_samples.at[jnp.isnan(logit_samples)].set(0)
+    
+    prob_samples  = jax.nn.softmax(logit_samples, axis=-1)[:,:,0]
+
+    """Plot empirical Mean"""
+    mean_probs = prob_samples.mean(0)
+    Z1 = mean_probs.reshape(X.shape)
+    cmap1 = get_palette()
+    vmin1, vmax1 = 0.0, 1.0
+    norm1 = mpl.colors.Normalize(vmin1, vmax1)
+    cf1 = ax.pcolormesh(
+        X, Y, Z1,
+        cmap=cmap1,
+        norm=norm1,
+        rasterized=True
+    )
+    if cbar:
+        cbar1 = fig.colorbar(cf1, ax=ax, label=r"$\text{E}[\mathbf{y^*|x^*},\mathcal{D}]$", location="left")
+        tick_vals = jnp.linspace(vmin1, vmax1, 2)
+        cbar1.set_ticks(tick_vals)  # nice round ticks
+        phantom_labels = [
+            rf'${x:.0f}.00$'
+            for x in tick_vals
+        ]
+        cbar1.set_ticklabels(phantom_labels)
+        cbar1.ax.yaxis.set_ticks_position('right')
+        cbar1.ax.yaxis.set_label_position('left')
+        ax.set_title("LLA predictive mean")
+
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel(r"$x_1$")
+    ax.set_ylabel(r"$x_2$")
+    for spine in ('top','bottom','left','right'):
+        ax.spines[spine].set_visible(True)
+        ax.spines[spine].set_linewidth(1.0)
+        ax.spines[spine].set_color('#333')
+    
+
+    if plot_Z: scatterp(*Z.T, color="yellow", zorder=8, marker="X", label="Inducing points", ax=ax)
+    
+    if plot_X: plot_binary_classification_data(Xtrain, ytrain, ax=ax)
+        
+    # if plot_Z or plot_X: ax[0].legend(loc="lower right", framealpha=1.0)
+    # pdb.set_trace()
+    
+    
 def plot_lla_2D_classification(
         fig,
         ax,
@@ -183,7 +276,7 @@ def plot_map_2D_classification(fig, ax, map_model_state, tmin, tmax, colorbar=Tr
     X,Y = jnp.meshgrid(t, t, indexing='ij')
     model_inputs = jnp.stack([X, Y], axis=-1)
     
-    logits = map_model_state.apply_fn(map_model_state.params, model_inputs)
+    logits = map_model_state.apply_fn({'params': map_model_state.params}, model_inputs)
     preds = softmax(logits, axis=-1)[:,:,0]
     # co = plt.contourf(X, Y, preds, levels=100, cmap=cmap, vmin=0., vmax=1.)
     co = ax.pcolormesh(X, Y, preds, cmap=cmap, vmin=0., vmax=1., alpha=1.0, rasterized=True)
@@ -336,6 +429,73 @@ def make_predictive_mean_figure(state, Xtrain, ytrain, alpha, num_mc_samples=100
 
     return fig
 
+def make_predictive_mean_figure2(state, Xtrain, ytrain, alpha, num_mc_samples=100):
+    """
+    Build the 1x3 figure:
+      [ MAP ] [ LLA ] [dataset]
+    and add one shared colorbar on the left.
+    """
+    tmin, tmax = Xtrain.min() - 1, Xtrain.max() + 1
+    t = jnp.linspace(tmin, tmax, 150)
+    Xg, Yg = jnp.meshgrid(t, t, indexing='ij')
+    
+    global X, Y, G
+    X, Y = Xg, Yg
+    G = Xg.shape[0]
+    pts = jnp.stack([X.ravel(), Y.ravel()], axis=-1)
+
+    cmap = get_palette()
+    norm = mpl.colors.Normalize(0, 1)
+
+    fig, axs = plt.subplots(1, 3, figsize=(13,4),
+                            sharex=True, 
+                            # sharey=True,
+                            constrained_layout=True
+                            )
+
+    plot_binary_classification_data(Xtrain, ytrain.squeeze(), axs[0])
+    plot_binary_classification_data(Xtrain, ytrain.squeeze(), axs[1])
+    plot_binary_classification_data(Xtrain, ytrain.squeeze(), axs[2])
+    
+    axs[1].set_title("NN MAP")
+    im0 = plot_map_2D_classification(fig, axs[1], state, tmin, tmax, colorbar=False)
+
+    axs[2].set_title("Full LLA")
+    im2 = plot_lla_mean(fig, axs[2],
+                        state, Xtrain, ytrain,
+                        alpha,
+                        num_mc_samples,
+                        plot_X=False)
+    
+    axs[0].set_title("Dataset")
+    axs[0].set_ylim(tmin, tmax)
+    axs[0].legend(loc="lower center", ncols=2)
+
+    for ax in axs:
+        ax.set_xlabel(r"$x_1$")
+        ax.set_xticks([]); ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_color('#333')
+            spine.set_linewidth(1.0)
+    axs[0].set_ylabel(r"$x_2$")
+
+    cbar = fig.colorbar(
+        mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
+        ax=axs,               
+        location="left",
+        label=r"$\mathrm{E}[y^* \mid x^*, \mathcal{D}]$",
+    )
+    
+    cbar.ax.yaxis.set_ticks_position('right')
+    cbar.ax.yaxis.set_label_position('left')
+    cbar.set_ticks(jnp.linspace(0, 1, 2))
+
+    # fig.subplots_adjust(top=0.85)
+    # fig.suptitle("Predictive mean", fontsize=16)
+
+    return fig
+
 
 def make_comparison_figure(state, Xtrain, ytrain, Z, alpha, matrix_free, num_mc_samples=100):
     """
@@ -360,12 +520,13 @@ def make_comparison_figure(state, Xtrain, ytrain, Z, alpha, matrix_free, num_mc_
         axs,
         state,
         Xtrain,
-        None,
+        ytrain,
         Z,
         alpha,
         matrix_free,
         num_mc_samples,
         mode="ip_lla",
+        key=jax.random.PRNGKey(123),
         # plot_Z=True,
         # cbar=False
     )
@@ -377,7 +538,7 @@ def make_comparison_figure(state, Xtrain, ytrain, Z, alpha, matrix_free, num_mc_
             spine.set_visible(True)
             spine.set_color('#333')
             spine.set_linewidth(1.0)
-        ax.set_ylabel(None)
+        # ax.set_ylabel(None)
 
     # axs[0].set_title(f'{r"$M="}{M}{r"$"}')
     axs[0].set_title(None)
@@ -386,8 +547,8 @@ def make_comparison_figure(state, Xtrain, ytrain, Z, alpha, matrix_free, num_mc_
     # plot_binary_classification_data(Xtrain, ytrain.squeeze(), axs[0])
     # plot_binary_classification_data(Xtrain, ytrain.squeeze(), axs[1])
     
-    # scatterp(*Z.T, color="yellow", s=200, zorder=8, marker="X", ax=axs[0])
-    # scatterp(*Z.T, color="yellow", s=200, zorder=8, marker="X", ax=axs[1])
+    scatterp(*Z.T, color="yellow", s=200, zorder=8, marker="X", ax=axs[0])
+    scatterp(*Z.T, color="yellow", s=200, zorder=8, marker="X", ax=axs[1])
     # fig.subplots_adjust(top=0.85)
     # fig.suptitle("Predictive mean", fontsize=16)
 

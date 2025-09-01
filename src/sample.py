@@ -111,7 +111,8 @@ def inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=None, key=None,
     beta = N / M
     
     invsqrt_fun = dense_funm_sym_eigh(lambda x: 1.0/jnp.sqrt(x)) # ! using monkeypatched clipped version of dense_funm_sym_eigh!!
-    decomp_method = decomp.tridiag_sym(2*M)
+    # decomp_method = decomp.tridiag_sym(2*M)
+    decomp_method = decomp.tridiag_sym(M)
     invmatsqrt = funm_lanczos_sym(invsqrt_fun, decomp_method)
 
     def invmatsqrt_term(V):
@@ -154,25 +155,3 @@ def sample(state, Z, D, alpha, key, model_type, num_samples=1, full_set_size=Non
     # samples = jax.vmap(inv_matsqrt_fun, in_axes=(0,))(Eps) #+ flat_params
     samples = jax.lax.map(inv_matsqrt_fun, Eps)
     return samples
-
-
-def sample_dense(state, Z, D, alpha, key, model_type, num_samples=1, full_set_size=None):
-    inv_matsqrt_ggn = inv_matsqrt_dense(state, Z, D, alpha, model_type, full_set_size=full_set_size)
-    inv_matsqrt_fun = lambda v: inv_matsqrt_ggn @ v
-    Eps = jax.random.normal(key, shape=(num_samples, D))
-    flat_params, unravel_fn = flatten_nn_params(state.params['params']) # todo could potentially make it s.t. we reuse MAP by passing flat params to inv_sqrtm
-    samples = jax.vmap(inv_matsqrt_fun, in_axes=(0,))(Eps) + flat_params
-    return samples
-
-
-def sample_both(state, Z, D, alpha, key, model_type, num_samples=1, full_set_size=None):
-    Eps = jax.random.normal(key, shape=(num_samples, D))
-    # flat_params, unravel_fn = flatten_nn_params(state.params['params']) # todo could potentially make it s.t. we reuse MAP by passing flat params to inv_sqrtm
-    
-    inv_matsqrt_fun = inv_matsqrt_vp(state, Z, D, alpha, model_type, full_set_size=full_set_size)
-    samples = jax.vmap(inv_matsqrt_fun, in_axes=(0,))(Eps)
-    
-    inv_matsqrt_ggn = inv_matsqrt_dense(state, Z, D, alpha, model_type, full_set_size=full_set_size)
-    inv_matsqrt_fun_dense = lambda v: inv_matsqrt_ggn @ v
-    dense_samples = jax.vmap(inv_matsqrt_fun_dense, in_axes=(0,))(Eps)
-    return samples, dense_samples
