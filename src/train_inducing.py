@@ -222,40 +222,30 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
         # Mini-batched Inducing Points v1:
         #   Sample at the level of optimize_step - i.e. each step is a new parameter sample ()
         
-        # Mini-batched Inducing Points v2:
-        
         # make mask along batch axis
-        ip_batchsize = 24
-        mask_indices = jnp.split(
-            jax.random.permutation(jax.random.fold_in(rng, 1), Z.shape[0]),
-            list(range(ip_batchsize, Z.shape[0], ip_batchsize)),
-            axis=0
-        )
+        ip_batchsize = 32
+        mask_idx = jax.random.permutation(jax.random.fold_in(rng, 1), Z.shape[0])[:ip_batchsize]
 
         grads = jnp.zeros_like(Z)
-        loss = 0.
-        for mask_idx in mask_indices:
-            Z_set = Z[mask_idx]
-            
-            rng = jax.random.fold_in(rng, 2)
-            grad_fun = variational_grad_scalable
-            new_loss, new_grads = grad_fun(
-                Z_set, 
-                X, 
-                map_model_state, 
-                alpha, 
-                key=rng,
-                # num_mc_samples=num_mc_samples,
-                model_type=model_type, 
-                full_set_size=full_set_size,
-                st_samples=st_samples, 
-                slq_samples=slq_samples, 
-                slq_num_matvecs=slq_num_matvecs
-            )
-            
-            loss += new_loss
-            grads = grads.at[mask_idx].set(new_grads)
-        loss /= len(mask_indices) # get mean loss
+        Z_set = Z[mask_idx]
+        
+        rng = jax.random.fold_in(rng, 2)
+        grad_fun = variational_grad_scalable
+        loss, new_grads = grad_fun(
+            Z_set, 
+            X, 
+            map_model_state, 
+            alpha, 
+            key=rng,
+            # num_mc_samples=num_mc_samples,
+            model_type=model_type, 
+            full_set_size=full_set_size,
+            st_samples=st_samples, 
+            slq_samples=slq_samples, 
+            slq_num_matvecs=slq_num_matvecs
+        )
+        
+        grads = grads.at[mask_idx].set(new_grads)
         
     else: 
         grad_fun = variational_grad_dense
