@@ -10,12 +10,10 @@ import optax
 from tqdm import tqdm
 
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
-from src.matfree_monkeypatch import integrand_funm_sym_logdet
 
 from src.stochtrace import hutchpp
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
 from src.ggn import compute_W_vps, build_WTW
-# from src.train_map import nl_likelihood_fun_regression
 from src.utils import count_model_params, flatten_nn_params
 from src.toydata import plot_binary_classification_data
 from src.data import make_iter
@@ -154,8 +152,7 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-16, s2=16)
     trace_term = stoch_trace(composite_vp)
     
-    # SLQ
-    slq_num_matvecs = slq_num_matvecs if slq_num_matvecs is not None else int(M*0.8)
+    slq_num_matvecs = min(slq_num_matvecs, M)
     def slq_logdet(Xfun):
         # Adapted from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
         # BUT using bidiagonal reformulation. See paper/thesis for details.
@@ -222,20 +219,44 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
             slq_num_matvecs=slq_num_matvecs
         )
     elif scalable:
-        grad_fun = variational_grad_scalable
-        loss, grads = grad_fun(
-            Z, 
-            X, 
-            map_model_state, 
-            alpha, 
-            key=rng,
-            # num_mc_samples=num_mc_samples,
-            model_type=model_type, 
-            full_set_size=full_set_size,
-            st_samples=st_samples, 
-            slq_samples=slq_samples, 
-            slq_num_matvecs=slq_num_matvecs
+        # Mini-batched Inducing Points v1:
+        #   Sample at the level of optimize_step - i.e. each step is a new parameter sample ()
+        
+        # Mini-batched Inducing Points v2:
+        
+        # make mask along batch axis
+        ip_batchsize = 24
+        mask_indices = jnp.split(
+            jax.random.permutation(jax.random.fold_in(rng, 1), Z.shape[0]),
+            list(range(ip_batchsize, Z.shape[0], ip_batchsize)),
+            axis=0
         )
+
+        grads = jnp.zeros_like(Z)
+        loss = 0.
+        for mask_idx in mask_indices:
+            Z_set = Z[mask_idx]
+            
+            rng = jax.random.fold_in(rng, 2)
+            grad_fun = variational_grad_scalable
+            new_loss, new_grads = grad_fun(
+                Z_set, 
+                X, 
+                map_model_state, 
+                alpha, 
+                key=rng,
+                # num_mc_samples=num_mc_samples,
+                model_type=model_type, 
+                full_set_size=full_set_size,
+                st_samples=st_samples, 
+                slq_samples=slq_samples, 
+                slq_num_matvecs=slq_num_matvecs
+            )
+            
+            loss += new_loss
+            grads = grads.at[mask_idx].set(new_grads)
+        loss /= len(mask_indices) # get mean loss
+        
     else: 
         grad_fun = variational_grad_dense
         loss, grads = grad_fun(
