@@ -229,6 +229,7 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
         grads = jnp.zeros_like(Z)
         Z_set = Z[mask_idx]
         
+        # pdb.set_trace()
         rng = jax.random.fold_in(rng, 2)
         grad_fun = variational_grad_scalable
         loss, new_grads = grad_fun(
@@ -302,6 +303,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         # ! Common Random Numbers - does it work???
         # if step % 4 == 0:
         #     rng = jax.random.fold_in(rng, step) # ? TEST holding probes constant
+        rng = jax.random.fold_in(rng, step)
         
         z, opt_state, loss = optimize_step(
             z, 
