@@ -1,13 +1,7 @@
 import argparse
 import math
-import os
-import pdb
 
 import jax
-import jax.numpy as jnp
-import matplotlib as mpl
-import numpy as np
-from flax.training import train_state
 import optax
 
 import matplotlib.pyplot as plt
