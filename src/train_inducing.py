@@ -11,6 +11,8 @@ from tqdm import tqdm
 
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
 
+from src.scalemodels import TrainState
+from src.train_alpha import train_alpha
 from src.stochtrace import hutchpp
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
 from src.ggn import compute_W_vps, build_WTW
@@ -223,7 +225,7 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
         #   Sample at the level of optimize_step - i.e. each step is a new parameter sample ()
         
         # make mask along batch axis
-        ip_batchsize = 32
+        ip_batchsize = 25
         mask_idx = jax.random.permutation(jax.random.fold_in(rng, 1), Z.shape[0])[:ip_batchsize]
 
         grads = jnp.zeros_like(Z)
@@ -266,11 +268,19 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
     return new_params, new_opt_state, loss
 
 
-def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, scalable, plot_type=None,
+def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, scalable, plot_type=None,
                           st_samples=256, slq_samples=2, slq_num_matvecs=None):
     z = zinit
     opt_state = zoptimizer.init(z)
-    # _iter = iter(dataloader)
+    
+    alpha_tx = optax.adam(learning_rate=1e-2)
+    # pdb.set_trace()
+    log_alpha_state = TrainState.create(
+        apply_fn=lambda p: p, 
+        params={'log_alpha': jnp.log(alpha)},
+        tx=alpha_tx,
+    )
+    
     _iter = make_iter(dataloader)
     
     def get_next_sample(num_batches=1):
@@ -309,7 +319,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             z, 
             x_sample,
             # Y=y_sample, # ! IMPORTANT: if this is uncommented, we use the original direct (and bad) ELBO formulation
-            map_model_state=map_model_state, 
+            map_model_state=map_state, 
             alpha=alpha, 
             opt_state=opt_state, 
             rng=rng,
@@ -318,12 +328,31 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             num_mc_samples=num_mc_samples,
             full_set_size=full_set_size,
             scalable=scalable,
-            st_samples=st_samples, 
+            st_samples=st_samples,
             slq_samples=slq_samples, 
             slq_num_matvecs=slq_num_matvecs
         )
         
-        pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
+        # every 10'th step, optimize alpha for 10 steps
+        alpha_steps_every = 4
+        alpha_steps_per_call = 4
+        if (step % alpha_steps_every == 0) and step != 0:
+            rng, alpha_rng = jax.random.split(rng)
+            log_alpha_state, map_state = train_alpha(
+                map_state=map_state,
+                log_alpha_state=log_alpha_state,
+                Z=z,
+                train_loader=dataloader,
+                test_loader=None,          # could pass a test loader
+                model_type=model_type,
+                num_steps=alpha_steps_per_call,
+                rng=alpha_rng,
+                slq_samples=slq_samples, 
+                slq_num_matvecs=slq_num_matvecs
+            )
+            alpha = jnp.exp(log_alpha_state.params['log_alpha']).item()
+        
+        pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
         
         # todo for debug: every 2 steps, record & plot
         if (plot_type is not None) and (step % 2 == 0):
@@ -347,22 +376,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
                 ax.set_ylabel('z[1]')
                 ax.set_title(f'Inducing Point Trajectory after {step} steps')
                 scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
-
-                # ! uncomment for backdrop (expensive)
-                # plot_lla_2D_classification_single(
-                #     fig, ax, map_model_state,
-                #     dataset_sample[0],
-                #     dataset_sample[1].squeeze(),
-                #     z_np,
-                #     alpha,
-                #     matrix_free=True,
-                #     num_mc_samples=500,
-                #     mode='ip_lla',
-                #     key=rng,
-                #     plot_Z=True,
-                #     # plot_X=True,
-                #     cbar=False
-                # )
+                
 
                 plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
                 

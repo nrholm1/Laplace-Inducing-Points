@@ -37,7 +37,6 @@ def _nl_prior(params: FrozenDict,
 
 #  Model wrapper that handles BatchNorm collections
 def _apply_model(state: TrainState, x, *, train: bool):
-    # vars_in = {"params": state.params['params'], "batch_stats": state.batch_stats}
     vars_in = {"params": state.params, "batch_stats": state.batch_stats}
     if train:
         y, new_vars = state.apply_fn(vars_in, x, train=True,
@@ -48,37 +47,42 @@ def _apply_model(state: TrainState, x, *, train: bool):
     return state, y
 
 
+def log_joint(params, batch_stats, state, batch, alpha, model_type):
+    tmp_state = state.replace(params=params, batch_stats=batch_stats)
+    tmp_state, outputs = _apply_model(tmp_state, batch[0], train=True)
+
+    # NLL
+    if model_type == "classifier":
+        y       = batch[1].squeeze()
+        logits  = outputs
+        one_hot = jax.nn.one_hot(y, logits.shape[-1])
+        nll     = jnp.mean(optax.softmax_cross_entropy(logits, one_hot))
+        nlp     = _nl_prior(params,
+                                weight_precision=alpha,
+                                bias_precision=alpha)
+    # MSE
+    else:
+        y       = batch[1]
+        y_hat, log_var = outputs
+        var     = jnp.exp(log_var)
+        se      = jnp.square(y_hat - y)
+        nll     = 0.5 * jnp.mean(jnp.log(2 * jnp.pi * var) + se / var)
+        nlp     = _nl_prior(params, weight_precision=alpha)
+
+    loss = nll + nlp
+    return loss, tmp_state.batch_stats
+
+
+
 @functools.partial(jax.jit, static_argnums=(2,))
 def _map_step(state: TrainState,
              batch,
              model_type: str,
-             prior_precision: float):
+             alpha: float):
     """Performs one optimisation step and returns the new state & loss."""
 
     def loss_fn(params, batch_stats):
-        tmp_state = state.replace(params=params, batch_stats=batch_stats)
-        tmp_state, outputs = _apply_model(tmp_state, batch[0], train=True)
-
-        # NLL
-        if model_type == "classifier":
-            y       = batch[1].squeeze()
-            logits  = outputs
-            one_hot = jax.nn.one_hot(y, logits.shape[-1])
-            nll     = jnp.mean(optax.softmax_cross_entropy(logits, one_hot))
-            nlp     = _nl_prior(params,
-                                 weight_precision=prior_precision,
-                                 bias_precision=prior_precision)
-        # MSE
-        else:
-            y       = batch[1]
-            y_hat, log_var = outputs
-            var     = jnp.exp(log_var)
-            se      = jnp.square(y_hat - y)
-            nll     = 0.5 * jnp.mean(jnp.log(2 * jnp.pi * var) + se / var)
-            nlp     = _nl_prior(params, weight_precision=prior_precision)
-
-        loss = nll + nlp
-        return loss, tmp_state.batch_stats
+        return log_joint(params, batch_stats, state, batch, alpha, model_type)
 
     (loss, new_bs), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params, state.batch_stats)
 
