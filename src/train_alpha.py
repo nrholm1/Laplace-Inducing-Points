@@ -112,23 +112,28 @@ def train_alpha(
     if rng is None:
         rng = jax.random.PRNGKey(0)
 
-    # pbar = tqdm(range(num_steps), ncols=80)
-    # for _ in pbar:
-    for _ in range(num_steps):
-        for batch in make_iter(train_loader):
-            rng, subkey = jax.random.split(rng)
-            log_alpha_state, map_state, loss = optimize_alpha_step(
-                log_alpha_state=log_alpha_state,
-                Z=Z,
-                map_state=map_state,
-                batch=batch,
-                model_type=model_type,
-                key=subkey,
-                slq_samples=slq_samples,
-                slq_num_matvecs=slq_num_matvecs,
-            )
+    pbar = tqdm(range(num_steps), ncols=80)
+    batches = make_iter(train_loader)  # assume this returns an iterator/generator
 
-        # pbar.set_description(f"α: {jnp.exp(log_alpha_state.params['log_alpha']):.7f}  loss: {float(loss):.3f}")
-        # pbar.refresh()
+    for _ in pbar:
+        batch = next(batches)  # get the next batch instead of indexing
+        rng, subkey = jax.random.split(rng)
+
+        log_alpha_state, map_state, loss = optimize_alpha_step(
+            log_alpha_state=log_alpha_state,
+            Z=Z,
+            map_state=map_state,
+            batch=batch,
+            model_type=model_type,
+            key=subkey,
+            slq_samples=slq_samples,
+            slq_num_matvecs=slq_num_matvecs,
+        )
+
+        # Ensure scalars for string formatting
+        alpha = float(jnp.exp(log_alpha_state.params["log_alpha"]))
+        loss_val = float(loss)
+
+        pbar.set_description(f"α: {alpha:.7f}  loss: {loss_val:.3f}")
 
     return log_alpha_state, map_state

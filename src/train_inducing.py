@@ -201,7 +201,7 @@ variational_grad_scalable = jax.value_and_grad(ip_objective_mf)
 variational_grad_og = jax.value_and_grad(direct_elbo_objective)
 
 
-@partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size', 'scalable', 'st_samples', 'slq_samples', 'slq_num_matvecs'))
+@partial(jax.jit, static_argnames=('model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size', 'scalable', 'st_samples', 'slq_samples', 'slq_num_matvecs'))
 def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, Y=None, full_set_size=None, scalable=True,
                   st_samples=256, slq_samples=2, slq_num_matvecs=None):
     if Y is not None:
@@ -225,7 +225,7 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
         #   Sample at the level of optimize_step - i.e. each step is a new parameter sample ()
         
         # make mask along batch axis
-        ip_batchsize = 25
+        ip_batchsize = 45
         mask_idx = jax.random.permutation(jax.random.fold_in(rng, 1), Z.shape[0])[:ip_batchsize]
 
         grads = jnp.zeros_like(Z)
@@ -335,8 +335,8 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         
         # every 10'th step, optimize alpha for 10 steps
         alpha_steps_every = 4
-        alpha_steps_per_call = 4
-        if (step % alpha_steps_every == 0) and step != 0:
+        alpha_steps_per_call = 1
+        if (step % alpha_steps_every == 0):# and step != 0:
             rng, alpha_rng = jax.random.split(rng)
             log_alpha_state, map_state = train_alpha(
                 map_state=map_state,
