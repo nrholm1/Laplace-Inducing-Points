@@ -87,7 +87,7 @@ def _fifo_prefetch(it: Iterable[Any], *, size: int) -> Iterator[Any]:
     """
     Keep `size` future elements from `it` parked on the current default device.
 
-    Works for a single or multi-GPU host, but **does not shard** – each yielded
+    Works for a single or multi-GPU host, but **does not shard** - each yielded
     item is copied to exactly one device.
     """
     dev   = jax.devices()[0]               # choose first visible device
