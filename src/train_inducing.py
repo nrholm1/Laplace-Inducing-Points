@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from matfree import decomp, funm, stochtrace as matfree_stochtrace
 
+from src.matfree_monkeypatch import integrand_funm_sym_logdet
 from src.stochtrace import hutchpp
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
 from src.ggn import compute_W_vps, build_WTW
@@ -122,6 +123,9 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     S_vp  = compute_curvature_approx(
         state, X, alpha=alpha, model_type=model_type, 
         full_set_size=N)
+    Sz_vp  = compute_curvature_approx(
+        state, Z, alpha=alpha, model_type=model_type, 
+        full_set_size=N)
     W, WT = compute_W_vps(
         state, Z, model_type=model_type, 
         full_set_size=None)
@@ -130,7 +134,8 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     inner_shape = dummy.shape
     d_z           = dummy.size
     I_d_z         = jnp.eye(d_z, dtype=float)
-    WTW = build_WTW(W, WT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
+    WTW = build_WTW(W, WT, inner_shape, d_z, dtype=float, block=64) # ! build dense WTW in blocks to lower memory pressure
+
     def Sz_inv_vp_woodbury_dense(v):
         u = WT(v).reshape(d_z)
         x   = jax.scipy.linalg.solve(
@@ -149,15 +154,18 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     st_sampler =  lambda _: probes
     slq_sampler = lambda _: probes[:slq_samples]
     
-    stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-16, s2=16)
+    stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-32, s2=32)
     trace_term = stoch_trace(composite_vp)
     
     slq_num_matvecs = min(slq_num_matvecs, M)
     def slq_logdet(Xfun):
         # Adapted from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
         # BUT using bidiagonal reformulation. See paper/thesis for details.
-        bidiag_sym = decomp.bidiag(slq_num_matvecs)
-        problem = funm.integrand_funm_product_logdet(bidiag_sym)
+        # bidiag_sym = decomp.bidiag(slq_num_matvecs)
+        # problem = funm.integrand_funm_product_logdet(bidiag_sym)
+        
+        tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
+        problem = integrand_funm_sym_logdet(tridiag_sym)
         
         estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
         estimate = partial(estimator, Xfun)
@@ -165,14 +173,15 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
         logdets = jax.lax.map(jax.checkpoint(estimate),keys)
         return logdets.mean()
                           
-    sqrt_alpha = jnp.sqrt(alpha)
-    def bidiag_target(v):
-        x, unravel_fn = jax.flatten_util.ravel_pytree(WT(v))
-        return jnp.concatenate([sqrt_alpha * v, x])
+    # sqrt_alpha = jnp.sqrt(alpha)
+    # def bidiag_target(v):
+    #     x, unravel_fn = jax.flatten_util.ravel_pytree(WT(v))
+    #     return jnp.concatenate([sqrt_alpha * v, x])
 
-    logdet_term = slq_logdet(bidiag_target)
+    # logdet_term = slq_logdet(bidiag_target)
+    logdet_term = slq_logdet(Sz_vp)
     
-    return logdet_term + trace_term
+    return trace_term + logdet_term
 
 
 def ip_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
@@ -223,8 +232,8 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
         #   Sample at the level of optimize_step - i.e. each step is a new parameter sample ()
         
         # make mask along batch axis
-        ip_batchsize = 32
-        mask_idx = jax.random.permutation(jax.random.fold_in(rng, 1), Z.shape[0])[:ip_batchsize]
+        #ip_batchsize = 200
+        mask_idx = jax.random.permutation(jax.random.fold_in(rng, 1), Z.shape[0])#[:ip_batchsize]
 
         grads = jnp.zeros_like(Z)
         Z_set = Z[mask_idx]
