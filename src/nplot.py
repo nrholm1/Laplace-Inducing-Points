@@ -73,7 +73,7 @@ def plot_lla_2D_classification_single(
     
     N = Xtrain.shape[0]
     tmin, tmax = Z.min() - 1.0, Z.max() + 1.0
-    t = jnp.linspace(tmin, tmax, 150)
+    t = jnp.linspace(tmin, tmax, 64)
     X, Y = jnp.meshgrid(t, t, indexing="ij")
     pts = jnp.stack([X.ravel(), Y.ravel()], axis=-1)
     
