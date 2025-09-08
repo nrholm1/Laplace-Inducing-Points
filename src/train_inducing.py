@@ -341,10 +341,10 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
             slq_num_matvecs=slq_num_matvecs
         )
         
-        # every 10'th step, optimize alpha for 10 steps
-        alpha_steps_every = 4
-        alpha_steps_per_call = 1
-        if (step % alpha_steps_every == 0):# and step != 0:
+        # after a burnin period, every x'th step, optimize alpha for y steps 
+        alpha_steps_every = 5
+        alpha_steps_per_call = 5
+        if (step % alpha_steps_every == 0) and step > 20:
             rng, alpha_rng = jax.random.split(rng)
             log_alpha_state, map_state = train_alpha(
                 map_state=map_state,
@@ -359,8 +359,6 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
                 slq_num_matvecs=slq_num_matvecs
             )
             alpha = jnp.exp(log_alpha_state.params['log_alpha']).item()
-        
-        pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
         
         pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
         
@@ -389,7 +387,7 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
 
                 # ! uncomment for backdrop (expensive)
                 plot_lla_2D_classification_single(
-                    fig, ax, map_model_state,
+                    fig, ax, map_state,
                     dataset_sample[0],
                     dataset_sample[1].squeeze(),
                     z_np,

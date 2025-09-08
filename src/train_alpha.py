@@ -112,7 +112,8 @@ def train_alpha(
     if rng is None:
         rng = jax.random.PRNGKey(0)
 
-    pbar = tqdm(range(num_steps), ncols=80)
+    # pbar = tqdm(range(num_steps), ncols=80)
+    pbar = range(num_steps)
     batches = make_iter(train_loader)  # assume this returns an iterator/generator
 
     for _ in pbar:
@@ -130,10 +131,9 @@ def train_alpha(
             slq_num_matvecs=slq_num_matvecs,
         )
 
-        # Ensure scalars for string formatting
-        alpha = float(jnp.exp(log_alpha_state.params["log_alpha"]))
-        loss_val = float(loss)
-
-        pbar.set_description(f"α: {alpha:.7f}  loss: {loss_val:.3f}")
+        # # Ensure scalars for string formatting
+        # alpha = float(jnp.exp(log_alpha_state.params["log_alpha"]))
+        # loss_val = float(loss)
+        # pbar.set_description(f"α: {alpha:.7f}  loss: {loss_val:.3f}")
 
     return log_alpha_state, map_state
