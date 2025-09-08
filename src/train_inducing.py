@@ -332,10 +332,29 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
             slq_num_matvecs=slq_num_matvecs
         )
         
-        pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
+        # every 10'th step, optimize alpha for 10 steps
+        alpha_steps_every = 10
+        alpha_steps_per_call = 10
+        if (step % alpha_steps_every == 0) and step != 0:
+            rng, alpha_rng = jax.random.split(rng)
+            # log_alpha_state, map_state = train_alpha(
+            #     map_state=map_state,
+            #     log_alpha_state=log_alpha_state,
+            #     Z=z,
+            #     train_loader=dataloader,
+            #     test_loader=None,          # could pass a test loader
+            #     model_type=model_type,
+            #     num_steps=alpha_steps_per_call,
+            #     rng=alpha_rng,
+            #     slq_samples=slq_samples, 
+            #     slq_num_matvecs=slq_num_matvecs
+            # )
+            # alpha = jnp.exp(log_alpha_state.params['log_alpha']).item()
         
-        # todo for debug: every 2 steps, record & plot
-        if (plot_type is not None) and (step % 2 == 0):
+        pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
+        
+        # todo for debug: every 6 steps, record & plot
+        if (plot_type is not None) and (step % 6 == 0):
             z_np = np.asarray(z)
             
             if plot_type in ['mnist', 'fmnist']:
@@ -358,21 +377,21 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
                 scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
 
                 # ! uncomment for backdrop (expensive)
-                # plot_lla_2D_classification_single(
-                #     fig, ax, map_model_state,
-                #     dataset_sample[0],
-                #     dataset_sample[1].squeeze(),
-                #     z_np,
-                #     alpha,
-                #     matrix_free=True,
-                #     num_mc_samples=500,
-                #     mode='ip_lla',
-                #     key=rng,
-                #     plot_Z=True,
-                #     # plot_X=True,
-                #     cbar=False
-                # )
-
+                plot_lla_2D_classification_single(
+                    fig, ax, map_model_state,
+                    dataset_sample[0],
+                    dataset_sample[1].squeeze(),
+                    z_np,
+                    alpha,
+                    matrix_free=True,
+                    num_mc_samples=32,
+                    mode='ip_lla',
+                    key=rng,
+                    plot_Z=True,
+                    # plot_X=True,
+                    cbar=False
+                )
+                
                 plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
                 
                 # force a draw
