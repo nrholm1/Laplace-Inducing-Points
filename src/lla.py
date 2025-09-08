@@ -56,7 +56,7 @@ def predict_lla_dense(map_state, Xnew, Z, model_type, alpha, full_set_size=None)
     
     @jax.jit
     def flat_apply_fn(flat_p, inputs):
-        p = unravel_fn(flat_p)
+        p = {'params': unravel_fn(flat_p)}
         if model_type=="regressor":
             mu_batched = map_state.apply_fn(p, inputs, return_logvar=False)
         else:

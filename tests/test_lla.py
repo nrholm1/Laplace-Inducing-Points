@@ -16,7 +16,7 @@ def test_posterior_lla(small_model_state, regression_1d_data):
     post_dist = posterior_lla_dense(small_model_state, X, alpha=prior_precision, model_type="regressor")
     
     _, flat_params_map, _ = compute_curvature_approx_dense(
-        small_model_state, X, alpha=prior_precision, model_type="regressor", return_Hinv=False
+        small_model_state, X, alpha=prior_precision, model_type="regressor"
     )
     np.testing.assert_allclose(post_dist.mean(), flat_params_map, rtol=1e-4, atol=1e-6)
     
@@ -101,11 +101,13 @@ def test_predict_lla_jvp_classifier(classifier_state, classification_2d_data):
     
     # post_dist = posterior_lla_dense(state, X, prior_precision=0.5, model_type="classifier")
     post_pred_dist = predict_lla_dense(state, xnew, X, alpha=0.5, model_type="classifier")
-    f_mean, f_cov_vp = predict_lla_scalable(state, xnew, X, model_type="classifier", alpha=0.5)
+    # f_mean, f_cov_vp = predict_lla_scalable(state, xnew, X, model_type="classifier", alpha=0.5)
     
-    diag = materialize_covariance(f_cov_vp, *f_mean.shape, mode='diag')
-    full = materialize_covariance(f_cov_vp, *f_mean.shape, mode='full')
+    # ! no longer makes sense, since we now return a sample prediction based on a single weight sample!
     
-    assert jnp.all( jnp.linalg.eigvals(full) > 0. ), "Covariance should be PSD!"
-    assert jnp.all( jnp.isclose(full, full.T, rtol=1e-4, atol=1e-12)), "Covariance should be symmetric up to a numerical error!"
-    pass
+    # diag = materialize_covariance(f_cov_vp, *f_mean.shape, mode='diag')
+    # full = materialize_covariance(f_cov_vp, *f_mean.shape, mode='full')
+    
+    # assert jnp.all( jnp.linalg.eigvals(full) > 0. ), "Covariance should be PSD!"
+    # assert jnp.all( jnp.isclose(full, full.T, rtol=1e-4, atol=1e-12)), "Covariance should be symmetric up to a numerical error!"
+    # pass

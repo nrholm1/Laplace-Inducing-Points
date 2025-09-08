@@ -8,7 +8,7 @@ from flax.core.frozen_dict import FrozenDict, freeze
 from src.toymodels import SimpleClassifier
 
 
-class LeNet5(nn.Module):
+'''class LeNet5(nn.Module):
     """LeNet-5 for MNIST / Fashion-MNIST (~60 k parameters)."""
     @nn.compact
     def __call__(self, x,  *args, **kwargs):
@@ -47,6 +47,64 @@ class LeNet5(nn.Module):
         # Output: 10 logits
         x = nn.Dense(features=10)(x)
         return x
+'''
+
+
+
+class ConvPoolBlock(nn.Module):
+    features: int
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Conv(features=self.features, kernel_size=(5, 5),
+                    strides=(1, 1), padding="VALID")(x)
+        x = nn.relu(x)
+        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
+        return x
+
+class DenseRelu(nn.Module):
+    features: int
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Dense(features=self.features)(x)
+        x = nn.relu(x)
+        return x
+
+class LeNet5(nn.Module):
+    """LeNet-5 for MNIST/Fashion-MNIST with rematerialization on heavy blocks."""
+    @nn.compact
+    def __call__(self, x,  *args, **kwargs):
+        # Ensure shape (batch, 28, 28, 1)
+        if x.ndim == 3:  # missing batch dim
+            x = x[None, ...]
+
+        # Pad to 32×32 to reproduce original LeNet geometry
+        x = jnp.pad(x, ((0, 0), (2, 2), (2, 2), (0, 0)), mode="constant")
+
+        CBlock = nn.remat(ConvPoolBlock)
+        DBlock = nn.remat(DenseRelu)
+        # CBlock = ConvPoolBlock
+        # DBlock = DenseRelu
+
+        # C1 → pool
+        x = CBlock(features=6)(x)
+        # C3 → pool
+        x = CBlock(features=16)(x)
+
+        # Flatten: 16 × 5 × 5 = 400
+        x = x.reshape((x.shape[0], -1))
+
+        # F5 → ReLU
+        x = DBlock(features=120)(x)
+        # F6 → ReLU
+        x = DBlock(features=84)(x)
+
+        # Output: 10 logits (cheap; no checkpoint)
+        x = nn.Dense(features=10)(x)
+        return x
+
+
 
 
 class LargeClassifier(nn.Module):

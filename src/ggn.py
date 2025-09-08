@@ -5,6 +5,148 @@ from functools import partial
 
 from src.utils import flatten_nn_params
 
+# def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
+#     """Return factorised GGN operators ``W`` and ``Wᴛ``.
+
+#     The interface is **identical** to the original implementation:
+
+#     Parameters
+#     ----------
+#     state : flax.training.train_state.TrainState
+#         Must expose ``params`` and – for BN models – ``batch_stats``.
+#     Z : jax.Array  (M, ...)
+#         Minibatch of inputs.
+#     model_type : {"regressor", "classifier"}
+#     full_set_size : int | None
+#         Size *N* of the full training set (for √(N∕M) rescaling).
+#     blockwise : bool, default False
+#         If True, return per‑example operators instead of the summed ones.
+
+#     Returns
+#     -------
+#     (Wfun, WTfun) or (W_per_point, WT_per_point)
+#         • Wfun(U)     computes  Σᵢ Jᵢᵀ Sᵢ Uᵢ  in θ‑space  (U.shape = (M,‑)).
+#         • WTfun(v)    computes  [Sᵢᵀ Jᵢ v]ᵢ   in √loss‑space (v.shape = θ‑dim).
+#         When *blockwise* is True the per‑example versions are returned.
+#     """
+
+#     # ---------------------------------------------------------------------
+#     # Flatten parameters once
+#     # ---------------------------------------------------------------------
+#     flat_params, unravel_fn = flatten_nn_params(state.params)
+
+#     M = Z.shape[0]
+#     N = full_set_size or M
+#     recal_term = jnp.sqrt(N / M)
+
+#     # ---------------------------------------------------------------------
+#     # √H actions  ("S"  and  "Sᵀ")   per data‑point
+#     # ---------------------------------------------------------------------
+#     def sqrt_Hi_apply_T(f_out, vec):
+#         """vec → S vec  (output → √loss)."""
+#         if model_type == "regressor":
+#             c = jnp.exp(-state.params["logvar"]["logvar"])
+#             return jnp.sqrt(c) * vec
+
+#         elif model_type == "classifier":
+#             # softmax‑cross‑entropy square root:  diag(√p)(I − 1 pᵗ)
+#             p = jax.nn.softmax(f_out)
+#             s = jnp.sqrt(p)
+#             tmp = s * vec                     # diag(s)
+#             coeff = jnp.dot(s, vec)           # sᵗ vec
+#             return tmp - coeff * p            # (I − p 1ᵗ)
+
+#         else:
+#             raise ValueError(f"Unknown model_type {model_type}")
+
+#     def sqrt_Hi_apply(f_out, vec):
+#         """vec → Sᵀ vec  (√loss → output)."""
+#         if model_type == "regressor":
+#             c = jnp.exp(-state.params["logvar"]["logvar"])
+#             return jnp.sqrt(c) * vec
+
+#         elif model_type == "classifier":
+#             p = jax.nn.softmax(f_out)
+#             s = jnp.sqrt(p)
+#             tmp = s * vec
+#             coeff = jnp.dot(p, vec)           # pᵗ vec
+#             return tmp - coeff * s
+
+#         else:
+#             raise ValueError(f"Unknown model_type {model_type}")
+
+#     # ---------------------------------------------------------------------
+#     # Model wrapper for flattened θ
+#     # ---------------------------------------------------------------------
+#     def model_fun(pflat, zi):
+#         p_unr = unravel_fn(pflat)
+#         if model_type == "regressor":
+#             return state.apply_fn(p_unr, zi, return_logvar=False)
+#         else:
+#             variables = {
+#                 "params": p_unr,
+#                 "batch_stats": state.batch_stats,
+#             }
+#             return state.apply_fn(variables, zi, train=False, mutable=False)
+
+#     # ---------------------------------------------------------------------
+#     # Per‑example linear operators, built from **one** forward pass
+#     # ---------------------------------------------------------------------
+#     def WT_per_point(i, v):
+#         """θ‑vector v → √loss‑space vector  (Sᵀ J v)."""
+#         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
+
+#         def fzi(pflat):
+#             return model_fun(pflat, zi).squeeze()
+
+#         # one forward‑mode pass
+#         f_val, lin_fun = jax.linearize(fzi, flat_params)
+
+#         # J v
+#         jv = lin_fun(v)
+
+#         # Sᵀ (J v)
+#         return sqrt_Hi_apply(f_val, jv)
+
+#     def W_per_point(i, u_i):
+#         """√loss‑space vector u_i → θ‑vector   (Jᵀ S u_i)."""
+#         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
+
+#         def fzi(pflat):
+#             return model_fun(pflat, zi).squeeze()
+
+#         # one forward‑mode pass
+#         f_val, lin_fun = jax.linearize(fzi, flat_params)
+
+#         # S u_i
+#         su = sqrt_Hi_apply_T(f_val, u_i)
+
+#         # Jᵀ (S u_i)   via transpose of lin_fun (no extra forward pass)
+#         jt_fun = jax.linear_transpose(lin_fun, flat_params)
+#         return jt_fun(su)[0]
+
+#     # ---------------------------------------------------------------------
+#     # Rescaling for subsampling
+#     # ---------------------------------------------------------------------
+#     rc_W_per_point = lambda i, u: recal_term * W_per_point(i, u)
+#     rc_WT_per_point = lambda i, v: recal_term * WT_per_point(i, v)
+
+#     if blockwise:
+#         return rc_W_per_point, rc_WT_per_point
+
+#     # ---------------------------------------------------------------------
+#     # Batched operators W and WT over the full mini‑batch
+#     # ---------------------------------------------------------------------
+#     def WTfun(v):
+#         # shape (M, K)
+#         return jax.vmap(rc_WT_per_point, in_axes=(0, None))(jnp.arange(M), v)
+
+#     def Wfun(U):
+#         # U shape (M, K) – vmap then sum over data points
+#         per_ex = jax.vmap(rc_W_per_point, in_axes=(0, 0))(jnp.arange(M), U)
+#         return per_ex.sum(axis=0)
+
+#     return Wfun, WTfun
 
 def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
     flat_params, unravel_fn = flatten_nn_params(state.params)
@@ -133,16 +275,20 @@ def compute_ggn_vp(state, Z, model_type, full_set_size=None):
     def ggn_vp(v):
         nonlocal recal_term
         total = jnp.zeros_like(flat_params)
+
         def body_fun(i, acc):
             zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-            def fzi(flatp): return model_fun(flatp, zi).squeeze() # ! added squeeze here - maybe super bad?
-            _, jvp_out = jax.jvp(fzi, (flat_params,), (v,)) # Compute the Jacobian–vector product: J_z @ v.
-            f_val = fzi(flat_params)                        # Compute the model output at the current parameters.
-            hv = H_action(f_val, jvp_out)                   # Apply the Hessian action: H_z @ (J_z @ v).
-            _, vjp_fn = jax.vjp(fzi, flat_params)           # Compute the vector–Jacobian product: J_z^T @ (H_z @ (J_z @ v)).
-            return acc + vjp_fn(hv)[0]
-        return jax.lax.fori_loop(0, M, body_fun, total) * recal_term
-            
+            def fzi(p):
+                return model_fun(p, zi).squeeze()
+            f_val, lin_fun = jax.linearize(fzi, flat_params)
+            jvp_out = lin_fun(v)
+            hv = H_action(f_val,
+                        jvp_out)
+            jt_fun   = jax.linear_transpose(lin_fun, v)
+            jt_hv, = jt_fun(hv)
+            return acc + jt_hv
+        return jax.lax.fori_loop(0, M, body_fun, total) * recal_term    
+        
     return ggn_vp
 
 
@@ -160,7 +306,7 @@ def compute_ggn_dense(state, Z, model_type, full_set_size=None):
     def model_fun(flatp, xi):
         p_unr = unravel_fn(flatp)
         if model_type == "regressor": return state.apply_fn(p_unr, xi, return_logvar=False)
-        else: return state.apply_fn(p_unr, xi, train=False)
+        else: return state.apply_fn({'params': p_unr}, xi, train=False)
 
     M = Z.shape[0]
     # Initialize GGN as a zero matrix
@@ -226,50 +372,6 @@ def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
 
     return jnp.triu(WTW) + jnp.triu(WTW, 1).T
         
-
-import math, jax, jax.numpy as jnp
-from functools import partial
-
-def build_WTWz(
-    WT,                 # Wᵀ : codomain → R^{d}        (here d = 128*2 = 256)
-    W_z,                # W_z: R^{d_z} → codomain      (here d_z = 32*2 = 64)
-    inner_shape_z,      # shape of a single W_z parameter vector (32, 2)
-    *,                  # keyword-only below
-    d,                  # number of parameters of W  (256)
-    dtype=jnp.bfloat16,
-    block=64,
-):
-    # ------------------------------------------------------------------ #
-    d_z = math.prod(inner_shape_z)
-    # ------------------------------------------------------------------ #
-
-    @partial(jax.remat, static_argnums=1)          # k is static
-    def col_block(start, k):
-        rows = start + jnp.arange(k, dtype=jnp.int32)         # (k,)
-        # build k basis vectors for the *W_z* domain
-        E    = jax.nn.one_hot(rows, d_z, dtype=dtype)\
-                  .reshape((k,) + inner_shape_z)              # (k, 32, 2)
-        # propagate:  (k, …) —W_z→ (k, D) —Wᵀ→ (k, d)
-        cols = jax.vmap(lambda e: WT(W_z(e)).reshape(-1))(E)  # (k, d)
-        return cols.astype(dtype)                             # (k, d)
-
-    G = jnp.zeros((d, d_z), dtype=dtype)
-
-    n_full, tail = divmod(d_z, block)
-
-    def body(b, acc):
-        start  = b * block
-        cols_T = col_block(start, block).T               # (d, block)
-        return jax.lax.dynamic_update_slice(acc, cols_T, (0, start))
-
-    G = jax.lax.fori_loop(0, n_full, body, G)
-
-    if tail:
-        start  = n_full * block
-        cols_T = col_block(start, tail).T                # (d, tail)
-        G      = jax.lax.dynamic_update_slice(G, cols_T, (0, start))
-
-    return G
 
 
 

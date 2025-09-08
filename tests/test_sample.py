@@ -9,7 +9,7 @@ from matfree import decomp
 from matfree.funm import funm_lanczos_sym, dense_funm_sym_eigh, funm_arnoldi
 
 from src.lla import posterior_lla_dense, compute_curvature_approx_dense, predict_lla_dense, predict_lla_scalable
-from src.sample import sample, inv_matsqrt_vp, sample_both, sample_dense, inv_matsqrt_dense
+from src.sample import sample, inv_matsqrt_vp, inv_matsqrt_dense
 from src.ggn import compute_ggn_dense, compute_W_vps, build_WTW
 from src.utils import flatten_nn_params, is_pd
 from fixtures import regression_1d_data, small_model_state, classifier_state, classification_2d_data, sine_data, toyregressor_state
@@ -531,7 +531,7 @@ def test_sample_fun_regressor_dense(sine_data, toyregressor_state):
     
     post_dist = posterior_lla_dense(state, X, model_type="regressor", alpha=alpha)
     # samples = sample_dense(state, X, D, alpha=alpha, key=key, model_type="regressor", num_samples=1_500)
-    samples, dense_samples = sample_both(state, X, D, alpha=alpha, key=key, model_type="regressor", num_samples=500)
+    # samples, dense_samples = sample_both(state, X, D, alpha=alpha, key=key, model_type="regressor", num_samples=500)
     
     # ggn,*_ = compute_ggn_dense(state, X, "regressor")
     # invmatsqrt_ggn = inv_matsqrt_dense(state, X, D, alpha, model_type="regressor")
@@ -586,6 +586,6 @@ def test_sample_fun_classifier_dense(classification_2d_data, classifier_state):
     post_dist = posterior_lla_dense(state, X, model_type="classifier", alpha=alpha)
     # samples_dense = sample_dense(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=10)
     # samples = sample(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=10)
-    samples, dense_samples = sample_both(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=10)
+    # samples, dense_samples = sample_both(state, X, D, alpha=alpha, key=key, model_type="classifier", num_samples=10)
     
     pass
