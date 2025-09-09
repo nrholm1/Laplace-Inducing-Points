@@ -356,7 +356,8 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
                 num_steps=alpha_steps_per_call,
                 rng=alpha_rng,
                 slq_samples=slq_samples, 
-                slq_num_matvecs=slq_num_matvecs
+                slq_num_matvecs=slq_num_matvecs,
+                full_set_size=full_set_size
             )
             alpha = jnp.exp(log_alpha_state.params['log_alpha']).item()
         

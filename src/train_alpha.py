@@ -13,9 +13,10 @@ from src.train_map import log_joint
 from src.lla import compute_curvature_approx
 from src.ggn import compute_W_vps
 from src.utils import count_model_params
+from src.matfree_monkeypatch import integrand_funm_sym_logdet
 
 
-@partial(jax.jit, static_argnames=('model_type', 'slq_samples', 'slq_num_matvecs'))
+@partial(jax.jit, static_argnames=('model_type', 'slq_samples', 'slq_num_matvecs', 'full_set_size'))
 def optimize_alpha_step(
         *,
         log_alpha_state,
@@ -26,6 +27,7 @@ def optimize_alpha_step(
         key,
         slq_samples: int = 1,
         slq_num_matvecs: int = 32,
+        full_set_size = None
     ):
     # log joint given data batch
     def log_joint_term(alpha, batch_stats):
@@ -39,12 +41,15 @@ def optimize_alpha_step(
     # log determinant
     D = count_model_params(map_state.params) # precompute
     def logdet_term(alpha):
-        nonlocal slq_num_matvecs, D
-        W, WT = compute_W_vps(
-            map_state, Z, model_type=model_type, 
-            full_set_size=None)
+        nonlocal slq_num_matvecs, D, full_set_size
+        # W, WT = compute_W_vps(
+        #     map_state, Z, model_type=model_type, 
+        #     full_set_size=None)
+        Sz_vp  = compute_curvature_approx(
+            map_state, Z, alpha=alpha, model_type=model_type, 
+            full_set_size=full_set_size)
         
-        M = Z.shape[0]
+        M = int(Z.shape[0])
         if model_type == 'regressor':
             D -= 1 # subtract logvar parameter!
         x0 = jnp.ones((D,), dtype=float)
@@ -53,9 +58,8 @@ def optimize_alpha_step(
         slq_num_matvecs = min(slq_num_matvecs, M)
         def slq_logdet(Xfun):
             # Adapted from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-            # BUT using bidiagonal reformulation. See paper/thesis for details.
-            bidiag_sym = decomp.bidiag(slq_num_matvecs)
-            problem = funm.integrand_funm_product_logdet(bidiag_sym)
+            tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
+            problem = integrand_funm_sym_logdet(tridiag_sym)
             
             estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
             estimate = partial(estimator, Xfun)
@@ -63,12 +67,7 @@ def optimize_alpha_step(
             logdets = jax.lax.map(jax.checkpoint(estimate),keys)
             return logdets.mean()
                             
-        sqrt_alpha = jnp.sqrt(alpha)
-        def bidiag_target(v):
-            x, unravel_fn = jax.flatten_util.ravel_pytree(WT(v))
-            return jnp.concatenate([sqrt_alpha * v, x])
-
-        return slq_logdet(bidiag_target)
+        return slq_logdet(Sz_vp)
     
     def loss_and_aux(params, batch_stats):
         log_alpha = params['log_alpha']
@@ -102,6 +101,7 @@ def train_alpha(
     rng=None,
     slq_samples: int = 1,
     slq_num_matvecs: int = 32,
+    full_set_size = None
 ):
     """
     Optimizes alpha for `num_steps` passes over `train_loader`.
@@ -129,6 +129,7 @@ def train_alpha(
             key=subkey,
             slq_samples=slq_samples,
             slq_num_matvecs=slq_num_matvecs,
+            full_set_size=full_set_size
         )
 
         # # Ensure scalars for string formatting
