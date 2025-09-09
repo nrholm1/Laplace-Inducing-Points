@@ -23,15 +23,6 @@ from src.data import make_iter
 from src.nplot import plot_color, scatterp, plot_grayscale, plot_lla_2D_classification_single
 
 
-def nll(yhat: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-    if y.ndim == 1 or y.shape[-1] == 1:  # regression
-        return 0.5 * jnp.mean((yhat.squeeze() - y.squeeze()) ** 2)
-    else:  # multi‑class classification (one‑hot ``y``)
-        logp = jax.nn.log_softmax(yhat, axis=-1)
-        return -jnp.mean(jnp.sum(y * logp, axis=-1))
-
-
-
 
 def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
                                    st_samples=256, slq_samples=2, slq_num_matvecs=None):
@@ -42,7 +33,6 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     """
     N = full_set_size
     M = Z.shape[0]
-    K = X.shape[0]
     beta = N / M
     alpha_inv = 1.0 / alpha
     beta_inv = 1.0 / beta
@@ -51,11 +41,10 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     if model_type == 'regressor':
         D -= 1 # subtract logvar parameter!
     
-    # compute matrix free linear operator oracles
-    S_vp  = compute_curvature_approx(
+    ggn_full  = compute_curvature_approx(
         state, X, alpha=alpha, model_type=model_type, 
         full_set_size=N)
-    Sz_vp  = compute_curvature_approx(
+    ggn_ip  = compute_curvature_approx(
         state, Z, alpha=alpha, model_type=model_type, 
         full_set_size=N)
     W, WT = compute_W_vps(
@@ -68,7 +57,8 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     I_d_z         = jnp.eye(d_z, dtype=float)
     WTW = build_WTW(W, WT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
 
-    def Sz_inv_vp_woodbury_dense(v):
+    def ggn_ip_inv(v):
+        # Reformulated via Woodbury inversion formula
         u = WT(v).reshape(d_z)
         x   = jax.scipy.linalg.solve(
             beta_inv*I_d_z + alpha_inv*WTW,
@@ -77,7 +67,7 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     
     
     def composite_vp(v):
-        return S_vp(Sz_inv_vp_woodbury_dense(v))
+        return ggn_full(ggn_ip_inv(v))
     
     # Use same random vector probes for StochTrace and SLQ
     x0 = jnp.ones((D,), dtype=float)
@@ -101,7 +91,7 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
         logdets = jax.lax.map(jax.checkpoint(estimate),keys)
         return logdets.mean()
                           
-    logdet_term = slq_logdet(Sz_vp)
+    logdet_term = slq_logdet(ggn_ip)
     
     return trace_term + logdet_term
 
@@ -118,7 +108,7 @@ def ip_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
     
     trace_term = jnp.linalg.trace(S @ S_z_inv)
     
-    _, S_logdet = 0., 0. # jnp.linalg.slogdet(S)
+    _, S_logdet = jnp.linalg.slogdet(S)
     _, S_z_inv_logdet = jnp.linalg.slogdet(S_z_inv)
     logdet_term = - S_logdet - S_z_inv_logdet
     
