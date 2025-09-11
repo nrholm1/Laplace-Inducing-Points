@@ -10,142 +10,107 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
     flat_params, unravel_fn = flatten_nn_params(state.params)
     M = Z.shape[0]
     N = full_set_size or M
-    recal_term = jnp.sqrt( N/M )
-    # recal_term = 1.
-    
-    def sqrt_Hi_apply_T(f_out, vec):
-        if model_type == 'regressor':
-            c = jnp.exp(-state.params['logvar']['logvar'])
-            return jnp.sqrt(c) * vec
-        elif model_type == 'classifier':
-            # # Softmax cross-entropy Hessian = diag(p) - p p^T, PSD
-            # -------- L · vec  --------
-            p = jax.nn.softmax(f_out)           # (K,)
-            s = jnp.sqrt(p)                     # (K,)
-            tmp    = s * vec                    # diag(s) · v
-            coeff  = jnp.dot(s, vec)            # sᵀ v
-            return tmp - coeff * p              # tmp - (sᵀv) · p
-    
-    def sqrt_Hi_apply(f_out, vec):
-        if model_type == 'regressor':
-            c = jnp.exp(-state.params['logvar']['logvar'])
-            return jnp.sqrt(c) * vec
-        elif model_type == 'classifier':
-            # -------- Lᵀ · vec --------
-            p = jax.nn.softmax(f_out)
-            s = jnp.sqrt(p)
-            tmp    = s * vec                    # diag(s) · v
-            coeff  = jnp.dot(p, vec)            # pᵀ v   (note the p!)
-            return tmp - coeff * s              # tmp - (pᵀv) · s
-            
-    
-    def model_fun(pflat, zi):
+    scale = jnp.sqrt(N / M)
+    f32 = jnp.float32
+
+    def _apply(pflat, zi):
         p_unr = unravel_fn(pflat)
-        if model_type == 'regressor':
+        if model_type == "regressor":
             return state.apply_fn(p_unr, zi, return_logvar=False)
         else:
-            variables = {
-                'params': p_unr,#['params'],
-                'batch_stats': state.batch_stats
-            }
+            variables = {"params": p_unr, "batch_stats": state.batch_stats}
             return state.apply_fn(variables, zi, train=False, mutable=False)
 
-    def WT_per_point(i,v):
-        zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-        # forward-mode JVP
-        def fzi(flatp):
-            return model_fun(flatp, zi).squeeze()
-        _, jvp_out = jax.jvp(fzi, (flat_params,), (v,))
-        f_val = fzi(flat_params)
-        # apply sqrt(H_i)
-        return sqrt_Hi_apply(f_val, jvp_out)
-    
-    def W_per_point(i, U_i):
-        zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
+    def _sqrt_H_T(f_out, u):
+        if model_type == "regressor":
+            c = jnp.exp(-state.params["logvar"]["logvar"]).astype(f32)
+            return jnp.sqrt(c) * u
+        else:
+            p = jax.nn.softmax(f_out)
+            s = jnp.sqrt(p)
+            return s * u - (jnp.dot(s, u)) * p
 
-        def fzi(flatp):
-            return model_fun(flatp, zi).squeeze()
+    def _sqrt_H(f_out, u):
+        if model_type == "regressor":
+            c = jnp.exp(-state.params["logvar"]["logvar"]).astype(f32)
+            return jnp.sqrt(c) * u
+        else:
+            p = jax.nn.softmax(f_out)
+            s = jnp.sqrt(p)
+            return s * u - (jnp.dot(p, u)) * s
 
-        # evaluate model output at current params (for sqrt_Hi_apply)
-        f_val = fzi(flat_params)
-        # apply sqrt(H_i)
-        h_sqrt_ui = sqrt_Hi_apply_T(f_val, U_i)
-        # reverse-mode VJP => J_i^T( h_sqrt_ui )
-        _, vjp_fn = jax.vjp(fzi, flat_params)
-        return vjp_fn(h_sqrt_ui)[0]
-    
-    # ! recalibrate!
-    rc_W_per_point, rc_WT_per_point = lambda *args,**kwargs: recal_term*W_per_point(*args,**kwargs), lambda *args,**kwargs: recal_term*WT_per_point(*args,**kwargs)
-    
+    def _WT_i(i, v):
+        zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
+        def f(p): return _apply(p, zi).squeeze()
+        f0, jv = jax.jvp(f, (flat_params,), (v,))
+        return _sqrt_H(f0, jv)
+
+    def _W_i(i, u_i):
+        zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
+        def f(p): return _apply(p, zi).squeeze()
+        f0, lin = jax.linearize(f, flat_params)
+        h = _sqrt_H_T(f0, u_i)
+        jt = jax.linear_transpose(lin, flat_params)
+        w_i, = jt(h)
+        return w_i
+
     if blockwise:
-        return rc_W_per_point, rc_WT_per_point
-    
+        return (
+            lambda i, U_i: scale * _W_i(i, U_i),
+            lambda i, v:   scale * _WT_i(i, v),
+        )
+
     def WTfun(v):
-        return jax.vmap(rc_WT_per_point, in_axes=(0,None))(jnp.arange(M), v)  # shape (M, K)
+        idx = jnp.arange(M, dtype=jnp.int32)
+        per_i = jax.vmap(lambda i: _WT_i(i, v))(idx)   # (M, K)
+        return scale * per_i
 
     def Wfun(U):
-        # vmap over i to get an (M, d) array of per-example contributions
-        per_example = jax.vmap(rc_W_per_point, in_axes=(0, 0))(jnp.arange(M), U)
-        # Sum over the M dimension
-        return per_example.sum(axis=0)
+        idx = jnp.arange(M, dtype=jnp.int32)
+        per_i = jax.vmap(_W_i, in_axes=(0, 0))(idx, U) # (M, D)
+        return scale * per_i.sum(axis=0)
 
     return Wfun, WTfun
 
 
 
 def compute_ggn_vp(state, Z, model_type, full_set_size=None):
-    """
-    Returns oracle for GGN vector product, i.e. (v |-> GGN @ v).
-    @params
-        Z: data points, i.e. potentially inducing points.
-        w: global recalibration parameter (learned).
-        V: vectors to multiply on GGN.
-        model_type: "regressor"|"classifier"
-        full_set_size: (if using inducing points or minibatching) size of full data set.
-    """
-    # flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params['params'])
     flat_params, unravel_fn = flatten_nn_params(state.params)
     M = Z.shape[0]
     N = full_set_size or M
-    recal_term = N / M
-    if model_type == "regressor": # handle closed form MSE hessian
-        recal_term *= jnp.exp( - state.params['logvar']['logvar']) # ! just multiply the hessian scalar directly onto the recal_term
-    
-    def model_fun(flatp, zi):
-        p_unr = unravel_fn(flatp)
-        if model_type == "regressor": return state.apply_fn(p_unr, zi, return_logvar=False)
-        else: 
-            variables = {
-                'params': p_unr,#['params'],
-                'batch_stats': state.batch_stats
-            }
-            return state.apply_fn(variables, zi, train=False, mutable=False)
-        
-    def H_action(fzi, u):
-        if model_type == "classifier": # closed form softmax cross-entropy Hessian
-            probs = jax.nn.softmax(fzi)
-            H_loss = jnp.diag(probs) - jnp.outer(probs, probs)
-            u = H_loss @ u
-        elif model_type == "regressor": ... # closed form MSE - handled later on, since it reduces to a global scalar coefficient
-        return u
-    
-    def ggn_vp(v):
-        nonlocal recal_term
-        total = jnp.zeros_like(flat_params)
+    scale = (N / M)
+    if model_type == "regressor":
+        scale = scale * jnp.exp(-state.params["logvar"]["logvar"])
 
-        def body_fun(i, acc):
+    def _apply(pflat, zi):
+        p_unr = unravel_fn(pflat)
+        if model_type == "regressor":
+            return state.apply_fn(p_unr, zi, return_logvar=False)
+        else:
+            variables = {"params": p_unr, "batch_stats": state.batch_stats}
+            return state.apply_fn(variables, zi, train=False, mutable=False)
+
+    def _H_action(f_out, u):
+        if model_type == "classifier":
+            p = jax.nn.softmax(f_out)
+            H = jnp.diag(p) - jnp.outer(p, p)
+            return H @ u
+        else:
+            return u
+
+    def ggn_vp(v):
+        def body(i, acc):
             zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-            def fzi(p):
-                return model_fun(p, zi).squeeze()
-            f_val, lin_fun = jax.linearize(fzi, flat_params)
-            jvp_out = lin_fun(v)
-            hv = H_action(f_val,
-                        jvp_out)
-            jt_fun   = jax.linear_transpose(lin_fun, v)
-            jt_hv, = jt_fun(hv)
-            return acc + jt_hv
-        return jax.lax.fori_loop(0, M, body_fun, total) * recal_term    
-        
+            def f(p): return _apply(p, zi).squeeze()
+            f0, lin = jax.linearize(f, flat_params)
+            jv = lin(v)
+            hv = _H_action(f0, jv)
+            jt = jax.linear_transpose(lin, flat_params)
+            jt_h, = jt(hv)
+            return acc + jt_h
+        total = jax.lax.fori_loop(0, M, body, jnp.zeros_like(flat_params))
+        return scale * total
+
     return ggn_vp
 
 
