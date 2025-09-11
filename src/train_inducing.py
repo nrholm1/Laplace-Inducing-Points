@@ -9,19 +9,17 @@ import numpy as np
 import optax
 from tqdm import tqdm
 
-from matfree import decomp, funm, stochtrace as matfree_stochtrace
+from matfree import stochtrace as matfree_stochtrace
 
-from src.matfree_monkeypatch import integrand_funm_sym_logdet
 from src.scalemodels import TrainState
 from src.train_alpha import train_alpha
-from src.stochtrace import hutchpp
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
 from src.ggn import compute_W_vps, build_WTW
-from src.utils import count_model_params, flatten_nn_params
+from src.utils import count_model_params
 from src.toydata import plot_binary_classification_data
 from src.data import make_iter
 from src.nplot import plot_color, scatterp, plot_grayscale, plot_lla_2D_classification_single
-
+from src.slq import estimate_logdet_slq
 
 
 def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
@@ -80,14 +78,14 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
 
     # SLQ
     slq_num_matvecs = min(slq_num_matvecs, M)
-    tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
-    problem = integrand_funm_sym_logdet(tridiag_sym)
-    slq_sampler = matfree_stochtrace.sampler_rademacher(x0, num=slq_samples)
-    slq_estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
-    estimate = lambda k: slq_estimator(ggn_ip, k)
-    keys = jax.random.split(key_slq, slq_samples)
-    logdets = jax.lax.map(jax.checkpoint(estimate), keys)
-    logdet_term = logdets.mean()
+    logdet_term = estimate_logdet_slq(
+        ggn_ip,
+        D=D,
+        M=M,
+        key=key_slq,
+        slq_samples=slq_samples,
+        slq_num_matvecs=slq_num_matvecs,
+    )
     
     return trace_term + logdet_term
 

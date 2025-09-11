@@ -11,9 +11,8 @@ from tqdm import tqdm
 from src.data import make_iter
 from src.train_map import log_joint
 from src.lla import compute_curvature_approx
-from src.ggn import compute_W_vps
 from src.utils import count_model_params
-from src.matfree_monkeypatch import integrand_funm_sym_logdet
+from src.slq import estimate_logdet_slq
 
 
 @partial(jax.jit, static_argnames=('model_type', 'slq_samples', 'slq_num_matvecs', 'full_set_size'))
@@ -39,43 +38,27 @@ def optimize_alpha_step(
                         model_type)
     
     # log determinant
-    D = count_model_params(map_state.params) # precompute
+    D = count_model_params(map_state.params)
+    M = int(Z.shape[0])
     def logdet_term(alpha):
-        nonlocal slq_num_matvecs, D, full_set_size
-        # W, WT = compute_W_vps(
-        #     map_state, Z, model_type=model_type, 
-        #     full_set_size=None)
-        Sz_vp  = compute_curvature_approx(
-            map_state, Z, alpha=alpha, model_type=model_type, 
-            full_set_size=full_set_size)
-        
-        M = int(Z.shape[0])
-        if model_type == 'regressor':
-            D -= 1 # subtract logvar parameter!
-        x0 = jnp.ones((D,), dtype=float)
-        sampler = matfree_stochtrace.sampler_rademacher(x0, num=slq_samples)
-        
-        slq_num_matvecs = min(slq_num_matvecs, M)
-        def slq_logdet(Xfun):
-            # Adapted from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-            tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
-            problem = integrand_funm_sym_logdet(tridiag_sym)
-            
-            estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
-            estimate = partial(estimator, Xfun)
-            keys = jax.random.split(key, slq_samples)
-            logdets = jax.lax.map(jax.checkpoint(estimate),keys)
-            return logdets.mean()
-                            
-        return slq_logdet(Sz_vp)
-    
+        Sz_vp = compute_curvature_approx(
+            map_state, Z, alpha=alpha, model_type=model_type, full_set_size=full_set_size
+        )
+        return estimate_logdet_slq(
+            Sz_vp,
+            D=D,
+            M=M,
+            key=key,
+            slq_samples=slq_samples,
+            slq_num_matvecs=slq_num_matvecs,
+        )
+
     def loss_and_aux(params, batch_stats):
         log_alpha = params['log_alpha']
         alpha = jnp.exp(log_alpha)
         (neg_log_post, new_bs) = log_joint_term(alpha, batch_stats)
         prior_normalizer = -0.5 * D * log_alpha
         logdet = logdet_term(alpha)
-        # pdb.set_trace()
         return neg_log_post + prior_normalizer + .5 * logdet, new_bs
     
     (loss, new_bs), grad_alpha = jax.value_and_grad(
