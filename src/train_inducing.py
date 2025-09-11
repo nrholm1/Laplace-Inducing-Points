@@ -55,43 +55,39 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     inner_shape = dummy.shape
     d_z           = dummy.size
     I_d_z         = jnp.eye(d_z, dtype=float)
-    WTW = build_WTW(W, WT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
+    WTW = build_WTW(W, WT, inner_shape, d_z, dtype=float, block=64) # ! build dense WTW in blocks to lower memory pressure
 
     def ggn_ip_inv(v):
-        # Reformulated via Woodbury inversion formula
+        # Woodbury inversion
         u = WT(v).reshape(d_z)
-        x   = jax.scipy.linalg.solve(
-            beta_inv*I_d_z + alpha_inv*WTW,
-            u)
-        return alpha_inv*v - alpha_inv**2*W(x.reshape(inner_shape))
-    
+        x = jax.scipy.linalg.solve(beta_inv * I_d_z + alpha_inv * WTW, u)
+        return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
     
     def composite_vp(v):
         return ggn_full(ggn_ip_inv(v))
+
+    key_trace, key_slq = jax.random.split(key, 2)
+    x0 = jnp.zeros((D,), dtype=float)
     
-    # Use same random vector probes for StochTrace and SLQ
-    x0 = jnp.ones((D,), dtype=float)
-    sampler = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
-    probes = sampler(key)
-    st_sampler =  lambda _: probes
-    slq_sampler = lambda _: probes[:slq_samples]
-    
-    stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-32, s2=32)
-    trace_term = stoch_trace(composite_vp)
-    
+    # Hutchinson
+    trace_integrand = matfree_stochtrace.integrand_trace()
+    trace_sampler = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
+    trace_estimator = partial(
+        matfree_stochtrace.estimator(trace_integrand, sampler=trace_sampler),
+        composite_vp
+    )
+    trace_term = jax.checkpoint(trace_estimator)(key_trace)
+
+    # SLQ
     slq_num_matvecs = min(slq_num_matvecs, M)
-    def slq_logdet(Xfun):
-        # Adapted from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
-        problem = integrand_funm_sym_logdet(tridiag_sym)
-        
-        estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
-        estimate = partial(estimator, Xfun)
-        keys = jax.random.split(key, slq_samples)
-        logdets = jax.lax.map(jax.checkpoint(estimate),keys)
-        return logdets.mean()
-                          
-    logdet_term = slq_logdet(ggn_ip)
+    tridiag_sym = decomp.tridiag_sym(slq_num_matvecs)
+    problem = integrand_funm_sym_logdet(tridiag_sym)
+    slq_sampler = matfree_stochtrace.sampler_rademacher(x0, num=slq_samples)
+    slq_estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
+    estimate = lambda k: slq_estimator(ggn_ip, k)
+    keys = jax.random.split(key_slq, slq_samples)
+    logdets = jax.lax.map(jax.checkpoint(estimate), keys)
+    logdet_term = logdets.mean()
     
     return trace_term + logdet_term
 
