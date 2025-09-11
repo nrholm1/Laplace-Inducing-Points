@@ -15,7 +15,7 @@ from src.scalemodels import TrainState
 from src.train_alpha import train_alpha
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
 from src.ggn import compute_W_vps, build_WTW
-from src.utils import count_model_params
+from src.utils import count_model_params, flatten_nn_params
 from src.toydata import plot_binary_classification_data
 from src.data import make_iter
 from src.nplot import plot_color, scatterp, plot_grayscale, plot_lla_2D_classification_single
@@ -23,70 +23,61 @@ from src.slq import estimate_logdet_slq
 
 
 def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
-                                   st_samples=256, slq_samples=2, slq_num_matvecs=None):
-    """ MATRIX FREE
-    =========================================
-    Compute KL[ q(theta|Z) || q(theta|data) ]
-    =========================================
-    """
+                    st_samples=256, slq_samples=2, slq_num_matvecs=None,
+                    *, flat_params, unravel_fn):
     N = full_set_size
     M = Z.shape[0]
     beta = N / M
     alpha_inv = 1.0 / alpha
     beta_inv = 1.0 / beta
-    
-    D = count_model_params(state.params)
-    if model_type == 'regressor':
-        D -= 1 # subtract logvar parameter!
-    
-    ggn_full  = compute_curvature_approx(
-        state, X, alpha=alpha, model_type=model_type, 
-        full_set_size=N)
-    ggn_ip  = compute_curvature_approx(
-        state, Z, alpha=alpha, model_type=model_type, 
-        full_set_size=N)
-    W, WT = compute_W_vps(
-        state, Z, model_type=model_type, 
-        full_set_size=None)
-    
-    dummy = WT(jnp.zeros(D))
+
+    D = sum(x.size for x in jax.tree_util.tree_leaves(unravel_fn(flat_params)))
+    if model_type == 'regressor': D -= 1
+
+    ggn_full = compute_curvature_approx(state, X, alpha=alpha, model_type=model_type,
+                                        flat_params=flat_params, unravel_fn=unravel_fn,
+                                        full_set_size=N)
+    ggn_ip = compute_curvature_approx(state, Z, alpha=alpha, model_type=model_type,
+                                      flat_params=flat_params, unravel_fn=unravel_fn,
+                                      full_set_size=N)
+    W, WT = compute_W_vps(state, Z, model_type=model_type,
+                          flat_params=flat_params, unravel_fn=unravel_fn,
+                          full_set_size=None)
+
+    dummy       = WT(jnp.zeros(D, dtype=jnp.float32))
     inner_shape = dummy.shape
-    d_z           = dummy.size
-    I_d_z         = jnp.eye(d_z, dtype=float)
-    WTW = build_WTW(W, WT, inner_shape, d_z, dtype=float, block=64) # ! build dense WTW in blocks to lower memory pressure
+    d_z         = dummy.size
+    I_d         = jnp.eye(d_z, dtype=jnp.float32)
+    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=1)
+
+    A   = beta_inv * I_d + alpha_inv * WTW
+    A   = 0.5 * (A + A.T) + (1e-6 * (jnp.mean(jnp.diag(A)) + 1.0)) * I_d
+    L   = jnp.linalg.cholesky(A)
+
+    def solve_A(u):
+        y = jax.scipy.linalg.solve_triangular(L, u, lower=True)
+        x = jax.scipy.linalg.solve_triangular(L.T, y, lower=False)
+        return x
 
     def ggn_ip_inv(v):
-        # Woodbury inversion
         u = WT(v).reshape(d_z)
-        x = jax.scipy.linalg.solve(beta_inv * I_d_z + alpha_inv * WTW, u)
-        return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
-    
+        x = solve_A(u)
+        return alpha_inv * v - (alpha_inv ** 2) * W(x.reshape(inner_shape))
+
     def composite_vp(v):
         return ggn_full(ggn_ip_inv(v))
 
     key_trace, key_slq = jax.random.split(key, 2)
-    x0 = jnp.zeros((D,), dtype=float)
-    
-    # Hutchinson
-    trace_integrand = matfree_stochtrace.integrand_trace()
-    trace_sampler = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
-    trace_estimator = partial(
-        matfree_stochtrace.estimator(trace_integrand, sampler=trace_sampler),
-        composite_vp
-    )
-    trace_term = jax.checkpoint(trace_estimator)(key_trace)
+    x0 = jnp.zeros((D,), dtype=jnp.float32)
 
-    # SLQ
+    trace_integrand = matfree_stochtrace.integrand_trace()
+    trace_sampler   = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
+    trace_estimator = partial(matfree_stochtrace.estimator(trace_integrand, sampler=trace_sampler), composite_vp)
+    trace_term      = jax.checkpoint(trace_estimator)(key_trace)
+
     slq_num_matvecs = min(slq_num_matvecs, M)
-    logdet_term = estimate_logdet_slq(
-        ggn_ip,
-        D=D,
-        M=M,
-        key=key_slq,
-        slq_samples=slq_samples,
-        slq_num_matvecs=slq_num_matvecs,
-    )
-    
+    logdet_term     = estimate_logdet_slq(ggn_ip, D=D, M=M, key=key_slq,
+                                          slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs)
     return trace_term + logdet_term
 
 
@@ -113,37 +104,26 @@ variational_grad_dense = jax.value_and_grad(ip_objective_dense)
 variational_grad_scalable = jax.value_and_grad(ip_objective_mf)
 
 
-@partial(jax.jit, static_argnames=('model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size', 'scalable', 'st_samples', 'slq_samples', 'slq_num_matvecs'))
-def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, full_set_size=None, scalable=True,
-                  st_samples=256, slq_samples=2, slq_num_matvecs=None):
+@partial(jax.jit, static_argnames=('model_type','zoptimizer','num_mc_samples','full_set_size','scalable','st_samples','slq_samples','slq_num_matvecs','unravel_fn'))
+def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples,
+                  model_type, full_set_size=None, scalable=True,
+                  st_samples=256, slq_samples=2, slq_num_matvecs=None,
+                  *, flat_params, unravel_fn):
     if scalable:
         rng = jax.random.fold_in(rng, 2)
-        grad_fun = variational_grad_scalable
-        loss, grads = grad_fun(
-            Z, 
-            X, 
-            map_model_state, 
-            alpha, 
-            key=rng,
-            model_type=model_type, 
-            full_set_size=full_set_size,
-            st_samples=st_samples, 
-            slq_samples=slq_samples, 
-            slq_num_matvecs=slq_num_matvecs
+        loss, grads = variational_grad_scalable(
+            Z, X, map_model_state, alpha,
+            key=rng, model_type=model_type, full_set_size=full_set_size,
+            st_samples=st_samples, slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs,
+            flat_params=flat_params, unravel_fn=unravel_fn
         )
-        
-    else: 
-        grad_fun = variational_grad_dense
-        loss, grads = grad_fun(
-            Z, 
-            X, 
-            map_model_state, 
-            alpha, 
-            key=rng,
-            model_type=model_type, 
-            full_set_size=full_set_size,
+    else:
+        loss, grads = variational_grad_dense(
+            Z, X, map_model_state, alpha,
+            key=rng, model_type=model_type, full_set_size=full_set_size,
+            flat_params=flat_params, unravel_fn=unravel_fn
         )
-    updates, new_opt_state = zoptimizer.update(grads, opt_state, Z) # ? ADAMW
+    updates, new_opt_state = zoptimizer.update(grads, opt_state, Z)
     new_params = optax.apply_updates(Z, updates)
     return new_params, new_opt_state, loss
 
@@ -185,6 +165,8 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         ub = dataset_sample.max(axis=0)
         del dataset_sample
     
+    flat_params_map, unravel_fn_map = flatten_nn_params(map_state.params)
+    
     pbar = tqdm(range(num_steps))
     for step in pbar:
         dataset_sample = get_next_sample(num_batches=1)
@@ -193,20 +175,12 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         rng = jax.random.fold_in(rng, step)
         
         Z, opt_state, loss = optimize_step(
-            Z, 
-            x_sample,
-            map_model_state=map_state, 
-            alpha=alpha, 
-            opt_state=opt_state, 
-            rng=rng,
-            model_type=model_type,
-            zoptimizer=zoptimizer, 
-            num_mc_samples=num_mc_samples,
-            full_set_size=full_set_size,
-            scalable=scalable,
-            st_samples=st_samples,
-            slq_samples=slq_samples, 
-            slq_num_matvecs=slq_num_matvecs
+            Z, x_sample,
+            map_model_state=map_state, alpha=alpha,
+            opt_state=opt_state, rng=rng, model_type=model_type, zoptimizer=zoptimizer,
+            num_mc_samples=num_mc_samples, full_set_size=full_set_size, scalable=scalable,
+            st_samples=st_samples, slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs,
+            flat_params=flat_params_map, unravel_fn=unravel_fn_map
         )
         
         # Jointly optimize alpha by interleaving steps.
@@ -254,7 +228,12 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
                 scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
 
                 # expensive backdrop
-                plot_lla_2D_classification_single(fig, ax, map_state,dataset_sample[0], dataset_sample[1].squeeze(), z_np, alpha, matrix_free=True, num_mc_samples=32, mode='ip_lla', key=rng, plot_Z=True, cbar=False)
+                plot_lla_2D_classification_single(
+                    fig, ax, map_state, dataset_sample[0], dataset_sample[1].squeeze(),
+                    z_np, alpha, matrix_free=True, num_mc_samples=32, mode='ip_lla', key=rng,
+                    plot_Z=True, cbar=False,
+                    flat_params=flat_params_map, unravel_fn=unravel_fn_map,
+                )
                 
                 plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
                 fig.canvas.draw()

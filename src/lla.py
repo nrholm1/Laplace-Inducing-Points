@@ -8,49 +8,37 @@ from src.utils import flatten_nn_params
 from src.sample import sample
 
 
-def compute_curvature_approx(map_state, Z, model_type, alpha, full_set_size=None):
-    """
-    Return linear operator oracle for computing mvp with PD negative approximate Hessian of the model parameters.
-    
-    > J.T @ H @ J + alpha·I,
-    
-    where alpha is prior precision.
-    """
-    ggn_vp = compute_ggn_vp(map_state, Z, model_type=model_type, full_set_size=full_set_size)
-    # alpha = 1.0 / (prior_precision**2)
+def compute_curvature_approx(map_state, Z, model_type, alpha, *, flat_params, unravel_fn, full_set_size=None):
+    ggn_vp = compute_ggn_vp(map_state, Z, model_type=model_type,
+                            flat_params=flat_params, unravel_fn=unravel_fn,
+                            full_set_size=full_set_size)
     def curvature_vp(v):
-        return ggn_vp(v) + alpha*v
+        return ggn_vp(v) + alpha * v
     return curvature_vp
 
 
-def compute_curvature_approx_dense(map_state, x, model_type, alpha, full_set_size=None):
-    """
-    Compute PD negative approximate Hessian of the model parameters.
-    > J.T @ H @ J + alpha·I
-    - Note: Instantiates dense GGN matrix.
-    """
-    GGN, flat_params_map, unravel_fn = compute_ggn_dense(map_state, x, model_type=model_type, full_set_size=full_set_size)
-    GGN += alpha * jnp.eye(GGN.shape[0])
-    return GGN, flat_params_map, unravel_fn
+def compute_curvature_approx_dense(map_state, x, model_type, alpha, *, flat_params, unravel_fn, full_set_size=None):
+    GGN, _, _ = compute_ggn_dense(map_state, x, model_type=model_type,
+                                  flat_params=flat_params, unravel_fn=unravel_fn,
+                                  full_set_size=full_set_size)
+    GGN += alpha * jnp.eye(GGN.shape[0], dtype=GGN.dtype)
+    return GGN, flat_params, unravel_fn
 
 
-def posterior_lla_dense(map_state, x, model_type, alpha, full_set_size=None, return_unravel_fn=False):
-    S_inv, flat_params_map, unravel_fn = compute_curvature_approx_dense(
-        map_state, x, model_type=model_type, alpha=alpha, full_set_size=full_set_size
-    )
-    S = jnp.linalg.solve(S_inv, jnp.eye(S_inv.shape[0])) # invert
+def posterior_lla_dense(map_state, x, model_type, alpha, *, flat_params, unravel_fn, full_set_size=None, return_unravel_fn=False):
+    S_inv, fp, unrav = compute_curvature_approx_dense(map_state, x, model_type, alpha,
+                                                      flat_params=flat_params, unravel_fn=unravel_fn,
+                                                      full_set_size=full_set_size)
+    S = jnp.linalg.solve(S_inv, jnp.eye(S_inv.shape[0], dtype=S_inv.dtype))
     posterior_dist = tfp.distributions.MultivariateNormalFullCovariance(
-        loc=flat_params_map.astype(jnp.float64),
-        covariance_matrix=S
+        loc=fp.astype(jnp.float64), covariance_matrix=S
     )
-    if return_unravel_fn:
-        return posterior_dist, unravel_fn
-    return posterior_dist
+    return (posterior_dist, unrav) if return_unravel_fn else posterior_dist
 
 
-def predict_lla_dense(map_state, Xnew, Z, model_type, alpha, full_set_size=None):
+def predict_lla_dense(map_state, Xnew, Z, model_type, alpha, full_set_size=None, *, flat_params, unravel_fn):
     S_inv, flat_params_map, unravel_fn = compute_curvature_approx_dense(
-        map_state, Z, model_type=model_type, alpha=alpha, full_set_size=full_set_size
+        map_state, Z, model_type, alpha, flat_params=flat_params, unravel_fn=unravel_fn, full_set_size=full_set_size
     )
     S = jnp.linalg.solve(S_inv, jnp.eye(S_inv.shape[0])) # invert
     
@@ -130,30 +118,43 @@ def predict_la_samples_dense(
     
 
 
-def predict_lla_scalable(map_state, Xnew, Z, model_type, alpha, key=None, full_set_size=None, num_samples=1):
-    flat_params, unravel_fn = flatten_nn_params(map_state.params)
+def predict_lla_scalable(
+    map_state,
+    Xnew,
+    Z,
+    model_type,
+    alpha,
+    key=None,
+    full_set_size=None,
+    num_samples=1,
+    *,
+    flat_params,
+    unravel_fn,
+):
     D = flat_params.shape[0]
-    key = key if key is not None else jax.random.PRNGKey(123) # todo handle
-    w_samples = sample(map_state, Z, D, alpha=alpha, key=key, model_type=model_type, num_samples=num_samples, full_set_size=full_set_size)
-    
-    @jax.jit
-    def model_fun(flat_p, x):
+    key = jax.random.PRNGKey(123) if key is None else key
+
+    # Draw parameter-space samples
+    w_samples = sample(
+        map_state, Z, D, alpha=alpha, key=key, model_type=model_type,
+        num_samples=num_samples, full_set_size=full_set_size,
+        flat_params=flat_params, unravel_fn=unravel_fn,
+    )
+
+    # Forward model at fixed Xnew; linearize once at MAP
+    def model_fun(flat_p):
         p = unravel_fn(flat_p)
-        if model_type=="regressor":
-            mu_batched = map_state.apply_fn(p, x, return_logvar=False)
+        if model_type == "regressor":
+            return map_state.apply_fn(p, Xnew, return_logvar=False)
         else:
-            # mu_batched = map_state.apply_fn(p, x, train=False, mutable=False)
-            # vars_in = {"params": p['params'], "batch_stats": map_state.batch_stats}
             vars_in = {"params": p, "batch_stats": map_state.batch_stats}
-            mu_batched = map_state.apply_fn(vars_in, x, train=False, mutable=False)
-        return mu_batched
-    fmu = model_fun(flat_params, Xnew)
-    def fz(p):
-        return model_fun(p, Xnew)
-    dy_fun = lambda w_sample: jax.jvp(fz, (flat_params,), (w_sample,))[1]
-    dys    = jax.lax.map(dy_fun, w_samples)
-    # pdb.set_trace()
+            return map_state.apply_fn(vars_in, Xnew, train=False, mutable=False)
+
+    fmu, lin = jax.linearize(model_fun, flat_params)
+    dys = jax.vmap(lin)(w_samples)
+
     return fmu[None] + dys
+
 
 
 

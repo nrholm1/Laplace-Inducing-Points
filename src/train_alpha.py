@@ -1,21 +1,16 @@
 from functools import partial
-import pdb
 from typing import Iterable, Optional
 import jax
 import jax.numpy as jnp
-import optax
-
-from matfree import decomp, funm, stochtrace as matfree_stochtrace
-from tqdm import tqdm
 
 from src.data import make_iter
 from src.train_map import log_joint
 from src.lla import compute_curvature_approx
-from src.utils import count_model_params
+from src.utils import count_model_params, flatten_nn_params
 from src.slq import estimate_logdet_slq
 
 
-@partial(jax.jit, static_argnames=('model_type', 'slq_samples', 'slq_num_matvecs', 'full_set_size'))
+@partial(jax.jit, static_argnames=('model_type', 'slq_samples', 'slq_num_matvecs', 'full_set_size', 'unravel_fn'))
 def optimize_alpha_step(
         *,
         log_alpha_state,
@@ -26,7 +21,9 @@ def optimize_alpha_step(
         key,
         slq_samples: int = 1,
         slq_num_matvecs: int = 32,
-        full_set_size = None
+        full_set_size = None,
+        flat_params, 
+        unravel_fn,
     ):
     # log joint given data batch
     def log_joint_term(alpha, batch_stats):
@@ -39,10 +36,12 @@ def optimize_alpha_step(
     
     # log determinant
     D = count_model_params(map_state.params)
+    if model_type == "regressor":
+        D -= 1
     M = int(Z.shape[0])
     def logdet_term(alpha):
         Sz_vp = compute_curvature_approx(
-            map_state, Z, alpha=alpha, model_type=model_type, full_set_size=full_set_size
+            map_state, Z, alpha=alpha, model_type=model_type, full_set_size=full_set_size, flat_params=flat_params, unravel_fn=unravel_fn,
         )
         return estimate_logdet_slq(
             Sz_vp,
@@ -95,12 +94,11 @@ def train_alpha(
     if rng is None:
         rng = jax.random.PRNGKey(0)
 
-    # pbar = tqdm(range(num_steps), ncols=80)
-    pbar = range(num_steps)
-    batches = make_iter(train_loader)  # assume this returns an iterator/generator
+    flat_params, unravel_fn = flatten_nn_params(map_state.params)
+    batches = make_iter(train_loader)
 
-    for _ in pbar:
-        batch = next(batches)  # get the next batch instead of indexing
+    for _ in range(num_steps):
+        batch = next(batches)
         rng, subkey = jax.random.split(rng)
 
         log_alpha_state, map_state, loss = optimize_alpha_step(
@@ -112,12 +110,9 @@ def train_alpha(
             key=subkey,
             slq_samples=slq_samples,
             slq_num_matvecs=slq_num_matvecs,
-            full_set_size=full_set_size
+            full_set_size=full_set_size,
+            flat_params=flat_params, 
+            unravel_fn=unravel_fn,
         )
-
-        # # Ensure scalars for string formatting
-        # alpha = float(jnp.exp(log_alpha_state.params["log_alpha"]))
-        # loss_val = float(loss)
-        # pbar.set_description(f"α: {alpha:.7f}  loss: {loss_val:.3f}")
 
     return log_alpha_state, map_state

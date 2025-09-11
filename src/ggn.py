@@ -6,12 +6,10 @@ from functools import partial
 from src.utils import flatten_nn_params
 
 
-def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
-    flat_params, unravel_fn = flatten_nn_params(state.params)
+def compute_W_vps(state, Z, model_type, *, flat_params, unravel_fn, full_set_size=None, blockwise=False):
     M = Z.shape[0]
     N = full_set_size or M
     scale = jnp.sqrt(N / M)
-    f32 = jnp.float32
 
     def _apply(pflat, zi):
         p_unr = unravel_fn(pflat)
@@ -23,20 +21,18 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
 
     def _sqrt_H_T(f_out, u):
         if model_type == "regressor":
-            c = jnp.exp(-state.params["logvar"]["logvar"]).astype(f32)
+            c = jnp.exp(-state.params["logvar"]["logvar"])
             return jnp.sqrt(c) * u
         else:
-            p = jax.nn.softmax(f_out)
-            s = jnp.sqrt(p)
+            p = jax.nn.softmax(f_out); s = jnp.sqrt(p)
             return s * u - (jnp.dot(s, u)) * p
 
     def _sqrt_H(f_out, u):
         if model_type == "regressor":
-            c = jnp.exp(-state.params["logvar"]["logvar"]).astype(f32)
+            c = jnp.exp(-state.params["logvar"]["logvar"])
             return jnp.sqrt(c) * u
         else:
-            p = jax.nn.softmax(f_out)
-            s = jnp.sqrt(p)
+            p = jax.nn.softmax(f_out); s = jnp.sqrt(p)
             return s * u - (jnp.dot(p, u)) * s
 
     def _WT_i(i, v):
@@ -62,20 +58,19 @@ def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
 
     def WTfun(v):
         idx = jnp.arange(M, dtype=jnp.int32)
-        per_i = jax.vmap(lambda i: _WT_i(i, v))(idx)   # (M, K)
+        per_i = jax.vmap(lambda i: _WT_i(i, v))(idx)
         return scale * per_i
 
     def Wfun(U):
         idx = jnp.arange(M, dtype=jnp.int32)
-        per_i = jax.vmap(_W_i, in_axes=(0, 0))(idx, U) # (M, D)
+        per_i = jax.vmap(_W_i, in_axes=(0, 0))(idx, U)
         return scale * per_i.sum(axis=0)
 
     return Wfun, WTfun
 
 
 
-def compute_ggn_vp(state, Z, model_type, full_set_size=None):
-    flat_params, unravel_fn = flatten_nn_params(state.params)
+def compute_ggn_vp(state, Z, model_type, *, flat_params, unravel_fn, full_set_size=None):
     M = Z.shape[0]
     N = full_set_size or M
     scale = (N / M)
@@ -114,31 +109,22 @@ def compute_ggn_vp(state, Z, model_type, full_set_size=None):
     return ggn_vp
 
 
-def compute_ggn_dense(state, Z, model_type, full_set_size=None):
-    """
-    Computes the GGN, instantiating everything along the way.
-    @params
-        Z: data points, i.e. potentially inducing points.
-        w: global recalibration parameter (learned).
-        model_type: "regressor"|"classifier"
-        full_set_size: (if using inducing points or minibatching) size of full data set.
-    """
-    flat_params, unravel_fn = flatten_nn_params(state.params)
-
-    def model_fun(flatp, xi):
-        p_unr = unravel_fn(flatp)
-        if model_type == "regressor": return state.apply_fn(p_unr, xi, return_logvar=False)
-        else: return state.apply_fn({'params': p_unr}, xi, train=False)
+def compute_ggn_dense(state, Z, model_type, *, flat_params, unravel_fn, full_set_size=None):
+    def model_fun(pflat, xi):
+        p_unr = unravel_fn(pflat)
+        if model_type == "regressor":
+            return state.apply_fn(p_unr, xi, return_logvar=False)
+        else:
+            return state.apply_fn({'params': p_unr}, xi, train=False)
 
     M = Z.shape[0]
-    # Initialize GGN as a zero matrix
-    GGN = jnp.zeros((flat_params.shape[0], flat_params.shape[0]))
+    D = flat_params.shape[0]
+    GGN = jnp.zeros((D, D), dtype=flat_params.dtype)
 
     def body_fun(i, acc):
         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
         J = jax.jacobian(lambda p: model_fun(p, zi))(flat_params)
         if model_type == "classifier":
-            # ! per datum hessian for classification
             fxi = model_fun(flat_params, zi)
             probs = jax.nn.softmax(fxi)
             H_loss = jnp.diag(probs) - jnp.outer(probs, probs)
@@ -148,16 +134,13 @@ def compute_ggn_dense(state, Z, model_type, full_set_size=None):
         return acc + ggn_i
 
     GGN = jax.lax.fori_loop(0, M, body_fun, GGN)
-    
+
     if model_type == "regressor":
-        # ! hessian for regression - equivalent simply to a scalar coefficient
-        varinv = jnp.exp( - state.params['logvar']['logvar']) 
+        varinv = jnp.exp(-state.params['logvar']['logvar'])
         GGN *= varinv
-    
-    # recalibration term
+
     N = full_set_size or M
     GGN *= N / M
-
     return GGN, flat_params, unravel_fn
     
     
