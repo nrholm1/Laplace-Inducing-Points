@@ -5,318 +5,126 @@ from functools import partial
 
 from src.utils import flatten_nn_params
 
-# def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
-#     """Return factorised GGN operators ``W`` and ``Wᴛ``.
 
-#     The interface is **identical** to the original implementation:
-
-#     Parameters
-#     ----------
-#     state : flax.training.train_state.TrainState
-#         Must expose ``params`` and – for BN models – ``batch_stats``.
-#     Z : jax.Array  (M, ...)
-#         Minibatch of inputs.
-#     model_type : {"regressor", "classifier"}
-#     full_set_size : int | None
-#         Size *N* of the full training set (for √(N∕M) rescaling).
-#     blockwise : bool, default False
-#         If True, return per‑example operators instead of the summed ones.
-
-#     Returns
-#     -------
-#     (Wfun, WTfun) or (W_per_point, WT_per_point)
-#         • Wfun(U)     computes  Σᵢ Jᵢᵀ Sᵢ Uᵢ  in θ‑space  (U.shape = (M,‑)).
-#         • WTfun(v)    computes  [Sᵢᵀ Jᵢ v]ᵢ   in √loss‑space (v.shape = θ‑dim).
-#         When *blockwise* is True the per‑example versions are returned.
-#     """
-
-#     # ---------------------------------------------------------------------
-#     # Flatten parameters once
-#     # ---------------------------------------------------------------------
-#     flat_params, unravel_fn = flatten_nn_params(state.params)
-
-#     M = Z.shape[0]
-#     N = full_set_size or M
-#     recal_term = jnp.sqrt(N / M)
-
-#     # ---------------------------------------------------------------------
-#     # √H actions  ("S"  and  "Sᵀ")   per data‑point
-#     # ---------------------------------------------------------------------
-#     def sqrt_Hi_apply_T(f_out, vec):
-#         """vec → S vec  (output → √loss)."""
-#         if model_type == "regressor":
-#             c = jnp.exp(-state.params["logvar"]["logvar"])
-#             return jnp.sqrt(c) * vec
-
-#         elif model_type == "classifier":
-#             # softmax‑cross‑entropy square root:  diag(√p)(I − 1 pᵗ)
-#             p = jax.nn.softmax(f_out)
-#             s = jnp.sqrt(p)
-#             tmp = s * vec                     # diag(s)
-#             coeff = jnp.dot(s, vec)           # sᵗ vec
-#             return tmp - coeff * p            # (I − p 1ᵗ)
-
-#         else:
-#             raise ValueError(f"Unknown model_type {model_type}")
-
-#     def sqrt_Hi_apply(f_out, vec):
-#         """vec → Sᵀ vec  (√loss → output)."""
-#         if model_type == "regressor":
-#             c = jnp.exp(-state.params["logvar"]["logvar"])
-#             return jnp.sqrt(c) * vec
-
-#         elif model_type == "classifier":
-#             p = jax.nn.softmax(f_out)
-#             s = jnp.sqrt(p)
-#             tmp = s * vec
-#             coeff = jnp.dot(p, vec)           # pᵗ vec
-#             return tmp - coeff * s
-
-#         else:
-#             raise ValueError(f"Unknown model_type {model_type}")
-
-#     # ---------------------------------------------------------------------
-#     # Model wrapper for flattened θ
-#     # ---------------------------------------------------------------------
-#     def model_fun(pflat, zi):
-#         p_unr = unravel_fn(pflat)
-#         if model_type == "regressor":
-#             return state.apply_fn(p_unr, zi, return_logvar=False)
-#         else:
-#             variables = {
-#                 "params": p_unr,
-#                 "batch_stats": state.batch_stats,
-#             }
-#             return state.apply_fn(variables, zi, train=False, mutable=False)
-
-#     # ---------------------------------------------------------------------
-#     # Per‑example linear operators, built from **one** forward pass
-#     # ---------------------------------------------------------------------
-#     def WT_per_point(i, v):
-#         """θ‑vector v → √loss‑space vector  (Sᵀ J v)."""
-#         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-
-#         def fzi(pflat):
-#             return model_fun(pflat, zi).squeeze()
-
-#         # one forward‑mode pass
-#         f_val, lin_fun = jax.linearize(fzi, flat_params)
-
-#         # J v
-#         jv = lin_fun(v)
-
-#         # Sᵀ (J v)
-#         return sqrt_Hi_apply(f_val, jv)
-
-#     def W_per_point(i, u_i):
-#         """√loss‑space vector u_i → θ‑vector   (Jᵀ S u_i)."""
-#         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-
-#         def fzi(pflat):
-#             return model_fun(pflat, zi).squeeze()
-
-#         # one forward‑mode pass
-#         f_val, lin_fun = jax.linearize(fzi, flat_params)
-
-#         # S u_i
-#         su = sqrt_Hi_apply_T(f_val, u_i)
-
-#         # Jᵀ (S u_i)   via transpose of lin_fun (no extra forward pass)
-#         jt_fun = jax.linear_transpose(lin_fun, flat_params)
-#         return jt_fun(su)[0]
-
-#     # ---------------------------------------------------------------------
-#     # Rescaling for subsampling
-#     # ---------------------------------------------------------------------
-#     rc_W_per_point = lambda i, u: recal_term * W_per_point(i, u)
-#     rc_WT_per_point = lambda i, v: recal_term * WT_per_point(i, v)
-
-#     if blockwise:
-#         return rc_W_per_point, rc_WT_per_point
-
-#     # ---------------------------------------------------------------------
-#     # Batched operators W and WT over the full mini‑batch
-#     # ---------------------------------------------------------------------
-#     def WTfun(v):
-#         # shape (M, K)
-#         return jax.vmap(rc_WT_per_point, in_axes=(0, None))(jnp.arange(M), v)
-
-#     def Wfun(U):
-#         # U shape (M, K) – vmap then sum over data points
-#         per_ex = jax.vmap(rc_W_per_point, in_axes=(0, 0))(jnp.arange(M), U)
-#         return per_ex.sum(axis=0)
-
-#     return Wfun, WTfun
-
-def compute_W_vps(state, Z, model_type, full_set_size=None, blockwise=False):
-    flat_params, unravel_fn = flatten_nn_params(state.params)
+def compute_W_vps(state, Z, model_type, *, flat_params, unravel_fn, full_set_size=None, blockwise=False):
     M = Z.shape[0]
     N = full_set_size or M
-    recal_term = jnp.sqrt( N/M )
-    # recal_term = 1.
-    
-    def sqrt_Hi_apply_T(f_out, vec):
-        if model_type == 'regressor':
-            c = jnp.exp(-state.params['logvar']['logvar'])
-            return jnp.sqrt(c) * vec
-        elif model_type == 'classifier':
-            # # Softmax cross-entropy Hessian = diag(p) - p p^T, PSD
-            # -------- L · vec  --------
-            p = jax.nn.softmax(f_out)           # (K,)
-            s = jnp.sqrt(p)                     # (K,)
-            tmp    = s * vec                    # diag(s) · v
-            coeff  = jnp.dot(s, vec)            # sᵀ v
-            return tmp - coeff * p              # tmp - (sᵀv) · p
-    
-    def sqrt_Hi_apply(f_out, vec):
-        if model_type == 'regressor':
-            c = jnp.exp(-state.params['logvar']['logvar'])
-            return jnp.sqrt(c) * vec
-        elif model_type == 'classifier':
-            # -------- Lᵀ · vec --------
-            p = jax.nn.softmax(f_out)
-            s = jnp.sqrt(p)
-            tmp    = s * vec                    # diag(s) · v
-            coeff  = jnp.dot(p, vec)            # pᵀ v   (note the p!)
-            return tmp - coeff * s              # tmp - (pᵀv) · s
-            
-    
-    def model_fun(pflat, zi):
+    scale = jnp.sqrt(N / M)
+
+    def _apply(pflat, zi):
         p_unr = unravel_fn(pflat)
-        if model_type == 'regressor':
+        if model_type == "regressor":
             return state.apply_fn(p_unr, zi, return_logvar=False)
         else:
-            variables = {
-                'params': p_unr,#['params'],
-                'batch_stats': state.batch_stats
-            }
-            # pdb.set_trace()
+            variables = {"params": p_unr, "batch_stats": state.batch_stats}
             return state.apply_fn(variables, zi, train=False, mutable=False)
 
-    def WT_per_point(i,v):
-        zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-        # forward-mode JVP
-        def fzi(flatp):
-            return model_fun(flatp, zi).squeeze()
-        _, jvp_out = jax.jvp(fzi, (flat_params,), (v,))
-        f_val = fzi(flat_params)
-        # apply sqrt(H_i)
-        return sqrt_Hi_apply(f_val, jvp_out)
-    
-    def W_per_point(i, U_i):
-        zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
+    def _sqrt_H_T(f_out, u):
+        if model_type == "regressor":
+            c = jnp.exp(-state.params["logvar"]["logvar"])
+            return jnp.sqrt(c) * u
+        else:
+            p = jax.nn.softmax(f_out); s = jnp.sqrt(p)
+            return s * u - (jnp.dot(s, u)) * p
 
-        def fzi(flatp):
-            return model_fun(flatp, zi).squeeze()
+    def _sqrt_H(f_out, u):
+        if model_type == "regressor":
+            c = jnp.exp(-state.params["logvar"]["logvar"])
+            return jnp.sqrt(c) * u
+        else:
+            p = jax.nn.softmax(f_out); s = jnp.sqrt(p)
+            return s * u - (jnp.dot(p, u)) * s
 
-        # evaluate model output at current params (for sqrt_Hi_apply)
-        f_val = fzi(flat_params)
-        # apply sqrt(H_i)
-        h_sqrt_ui = sqrt_Hi_apply_T(f_val, U_i)
-        # reverse-mode VJP => J_i^T( h_sqrt_ui )
-        _, vjp_fn = jax.vjp(fzi, flat_params)
-        return vjp_fn(h_sqrt_ui)[0]
-    
-    # ! recalibrate!
-    rc_W_per_point, rc_WT_per_point = lambda *args,**kwargs: recal_term*W_per_point(*args,**kwargs), lambda *args,**kwargs: recal_term*WT_per_point(*args,**kwargs)
-    
+    def _WT_i(i, v):
+        zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
+        def f(p): return _apply(p, zi).squeeze()
+        f0, jv = jax.jvp(f, (flat_params,), (v,))
+        return _sqrt_H(f0, jv)
+
+    def _W_i(i, u_i):
+        zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
+        def f(p): return _apply(p, zi).squeeze()
+        f0, lin = jax.linearize(f, flat_params)
+        h = _sqrt_H_T(f0, u_i)
+        jt = jax.linear_transpose(lin, flat_params)
+        w_i, = jt(h)
+        return w_i
+
     if blockwise:
-        return rc_W_per_point, rc_WT_per_point
-    
+        return (
+            lambda i, U_i: scale * _W_i(i, U_i),
+            lambda i, v:   scale * _WT_i(i, v),
+        )
+
     def WTfun(v):
-        return jax.vmap(rc_WT_per_point, in_axes=(0,None))(jnp.arange(M), v)  # shape (M, K)
+        idx = jnp.arange(M, dtype=jnp.int32)
+        per_i = jax.vmap(lambda i: _WT_i(i, v))(idx)
+        return scale * per_i
 
     def Wfun(U):
-        # vmap over i to get an (M, d) array of per-example contributions
-        per_example = jax.vmap(rc_W_per_point, in_axes=(0, 0))(jnp.arange(M), U)
-        # Sum over the M dimension
-        return per_example.sum(axis=0)
+        idx = jnp.arange(M, dtype=jnp.int32)
+        per_i = jax.vmap(_W_i, in_axes=(0, 0))(idx, U)
+        return scale * per_i.sum(axis=0)
 
     return Wfun, WTfun
 
 
 
-def compute_ggn_vp(state, Z, model_type, full_set_size=None):
-    """
-    Returns oracle for GGN vector product, i.e. (v |-> GGN @ v).
-    @params
-        Z: data points, i.e. potentially inducing points.
-        w: global recalibration parameter (learned).
-        V: vectors to multiply on GGN.
-        model_type: "regressor"|"classifier"
-        full_set_size: (if using inducing points or minibatching) size of full data set.
-    """
-    # flat_params, unravel_fn = jax.flatten_util.ravel_pytree(state.params['params'])
-    flat_params, unravel_fn = flatten_nn_params(state.params)
+def compute_ggn_vp(state, Z, model_type, *, flat_params, unravel_fn, full_set_size=None):
     M = Z.shape[0]
     N = full_set_size or M
-    recal_term = N / M
-    if model_type == "regressor": # handle closed form MSE hessian
-        recal_term *= jnp.exp( - state.params['logvar']['logvar']) # ! just multiply the hessian scalar directly onto the recal_term
-    
-    def model_fun(flatp, zi):
-        p_unr = unravel_fn(flatp)
-        if model_type == "regressor": return state.apply_fn(p_unr, zi, return_logvar=False)
-        else: 
-            variables = {
-                'params': p_unr,#['params'],
-                'batch_stats': state.batch_stats
-            }
-            return state.apply_fn(variables, zi, train=False, mutable=False)
-        
-    def H_action(fzi, u):
-        if model_type == "classifier": # closed form softmax cross-entropy Hessian
-            probs = jax.nn.softmax(fzi)
-            H_loss = jnp.diag(probs) - jnp.outer(probs, probs)
-            u = H_loss @ u
-        elif model_type == "regressor": ... # closed form MSE - handled later on, since it reduces to a global scalar coefficient
-        return u
-    
-    def ggn_vp(v):
-        nonlocal recal_term
-        total = jnp.zeros_like(flat_params)
+    scale = (N / M)
+    if model_type == "regressor":
+        scale = scale * jnp.exp(-state.params["logvar"]["logvar"])
 
-        def body_fun(i, acc):
+    def _apply(pflat, zi):
+        p_unr = unravel_fn(pflat)
+        if model_type == "regressor":
+            return state.apply_fn(p_unr, zi, return_logvar=False)
+        else:
+            variables = {"params": p_unr, "batch_stats": state.batch_stats}
+            return state.apply_fn(variables, zi, train=False, mutable=False)
+
+    def _H_action(f_out, u):
+        if model_type == "classifier":
+            p = jax.nn.softmax(f_out)
+            H = jnp.diag(p) - jnp.outer(p, p)
+            return H @ u
+        else:
+            return u
+
+    def ggn_vp(v):
+        def body(i, acc):
             zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-            def fzi(p):
-                return model_fun(p, zi).squeeze()
-            f_val, lin_fun = jax.linearize(fzi, flat_params)
-            jvp_out = lin_fun(v)
-            hv = H_action(f_val,
-                        jvp_out)
-            jt_fun   = jax.linear_transpose(lin_fun, v)
-            jt_hv, = jt_fun(hv)
-            return acc + jt_hv
-        return jax.lax.fori_loop(0, M, body_fun, total) * recal_term    
-        
+            def f(p): return _apply(p, zi).squeeze()
+            f0, lin = jax.linearize(f, flat_params)
+            jv = lin(v)
+            hv = _H_action(f0, jv)
+            jt = jax.linear_transpose(lin, flat_params)
+            jt_h, = jt(hv)
+            return acc + jt_h
+        total = jax.lax.fori_loop(0, M, body, jnp.zeros_like(flat_params))
+        return scale * total
+
     return ggn_vp
 
 
-def compute_ggn_dense(state, Z, model_type, full_set_size=None):
-    """
-    Computes the GGN, instantiating everything along the way.
-    @params
-        Z: data points, i.e. potentially inducing points.
-        w: global recalibration parameter (learned).
-        model_type: "regressor"|"classifier"
-        full_set_size: (if using inducing points or minibatching) size of full data set.
-    """
-    flat_params, unravel_fn = flatten_nn_params(state.params)
-
-    def model_fun(flatp, xi):
-        p_unr = unravel_fn(flatp)
-        if model_type == "regressor": return state.apply_fn(p_unr, xi, return_logvar=False)
-        else: return state.apply_fn({'params': p_unr}, xi, train=False)
+def compute_ggn_dense(state, Z, model_type, *, flat_params, unravel_fn, full_set_size=None):
+    def model_fun(pflat, xi):
+        p_unr = unravel_fn(pflat)
+        if model_type == "regressor":
+            return state.apply_fn(p_unr, xi, return_logvar=False)
+        else:
+            return state.apply_fn({'params': p_unr}, xi, train=False)
 
     M = Z.shape[0]
-    # Initialize GGN as a zero matrix
-    GGN = jnp.zeros((flat_params.shape[0], flat_params.shape[0]))
+    D = flat_params.shape[0]
+    GGN = jnp.zeros((D, D), dtype=flat_params.dtype)
 
     def body_fun(i, acc):
         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
         J = jax.jacobian(lambda p: model_fun(p, zi))(flat_params)
         if model_type == "classifier":
-            # ! per datum hessian for classification
             fxi = model_fun(flat_params, zi)
             probs = jax.nn.softmax(fxi)
             H_loss = jnp.diag(probs) - jnp.outer(probs, probs)
@@ -326,51 +134,54 @@ def compute_ggn_dense(state, Z, model_type, full_set_size=None):
         return acc + ggn_i
 
     GGN = jax.lax.fori_loop(0, M, body_fun, GGN)
-    
+
     if model_type == "regressor":
-        # ! hessian for regression - equivalent simply to a scalar coefficient
-        varinv = jnp.exp( - state.params['logvar']['logvar']) 
+        varinv = jnp.exp(-state.params['logvar']['logvar'])
         GGN *= varinv
-    
-    # recalibration term
+
     N = full_set_size or M
     GGN *= N / M
-
     return GGN, flat_params, unravel_fn
     
     
 
 
-def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
-    """
-    Return WᵀW ∈ R^{dxd} with ≤ (block · #params) peak memory.
-    """
-    @partial(jax.remat, static_argnums=1)          # k is static
+def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=256):
+    compute_dtype = dtype
+    acc_dtype = jnp.float32 if compute_dtype in (jnp.bfloat16, jnp.float16) else compute_dtype
+
+    W_b  = jax.vmap(W,  in_axes=0, out_axes=0)
+    WT_b = jax.vmap(WT, in_axes=0, out_axes=0)
+
+    @partial(jax.remat, static_argnums=(1,))
     def col_block(start, k):
-        rows = start + jnp.arange(k, dtype=jnp.int32)        # shape (k,)
-        E    = jax.nn.one_hot(rows, d, dtype=dtype)\
-                  .reshape((k,) + inner_shape)               # (k, M, C)
-        cols = jax.vmap(lambda e: WT(W(e)).reshape(-1))(E)   # (k, d)
-        return cols.astype(dtype)                            # (k, d)
+        rows = start + jnp.arange(k, dtype=jnp.int32)
+        E = jax.nn.one_hot(rows, d, dtype=compute_dtype)\
+                .reshape((k,) + inner_shape)
+        WE   = W_b(E)                   
+        WTWE = WT_b(WE).reshape(k, d)   
+        return WTWE.T.astype(acc_dtype)        
 
-    WTW = jnp.zeros((d, d), dtype=dtype)
-
+    WTW = jnp.zeros((d, d), dtype=acc_dtype)
     n_full, tail = divmod(d, block)
 
-    def body(b, acc):
+    def body(carry, b):
         start = b * block
-        cols  = col_block(start, block)      # (block, d)
-        return jax.lax.dynamic_update_slice(acc, cols.T, (0, start))
+        colsT = col_block(start, block)
+        carry = jax.lax.dynamic_update_slice(carry, colsT, (0, start))
+        return carry, None
 
-    WTW = jax.lax.fori_loop(0, n_full, body, WTW)
+    # main blocks
+    WTW, _ = jax.lax.scan(body, WTW, jnp.arange(n_full, dtype=jnp.int32))
 
-    # Tail slice, checkpointed
+    # tail block
     if tail:
         start  = n_full * block
-        cols_t = col_block(start, tail).T    # (d, tail)
+        cols_t = col_block(start, tail)
         WTW    = jax.lax.dynamic_update_slice(WTW, cols_t, (0, start))
 
-    return jnp.triu(WTW) + jnp.triu(WTW, 1).T
+    return 0.5 * (WTW + WTW.T)
+
         
 
 

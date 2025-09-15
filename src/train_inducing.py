@@ -9,170 +9,65 @@ import numpy as np
 import optax
 from tqdm import tqdm
 
-from matfree import decomp, funm, stochtrace as matfree_stochtrace
+from matfree import stochtrace as matfree_stochtrace
 
-from src.stochtrace import hutchpp
+from src.scalemodels import TrainState
+from src.train_alpha import train_alpha
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx, predict_lla_scalable
 from src.ggn import compute_W_vps, build_WTW
 from src.utils import count_model_params, flatten_nn_params
 from src.toydata import plot_binary_classification_data
 from src.data import make_iter
 from src.nplot import plot_color, scatterp, plot_grayscale, plot_lla_2D_classification_single
-
-
-def nll(yhat: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-    if y.ndim == 1 or y.shape[-1] == 1:  # regression
-        return 0.5 * jnp.mean((yhat.squeeze() - y.squeeze()) ** 2)
-    else:  # multi‑class classification (one‑hot ``y``)
-        logp = jax.nn.log_softmax(yhat, axis=-1)
-        return -jnp.mean(jnp.sum(y * logp, axis=-1))
-
-
-def direct_elbo_objective(Z, X, Y, state, alpha, model_type, key, full_set_size=None, num_mc_samples=1, st_samples=256, slq_samples=2, slq_num_matvecs=None):
-    N = full_set_size
-    M = Z.shape[0]
-    beta = N / M
-    alpha_inv = 1.0 / alpha
-    beta_inv = 1.0 / beta
-    
-    D = count_model_params(state.params)
-    if model_type == 'regressor':
-        D -= 1 # ! subtract logvar parameter!
-    
-    yhat = predict_lla_scalable(state, X, Z, model_type, alpha, key=key, full_set_size=None, num_samples=num_mc_samples)
-    loss = jnp.mean(jax.vmap(lambda yhat_single: nll(yhat_single, jax.nn.one_hot(Y, num_classes=yhat.shape[2])), in_axes=0)(yhat))
-    
-    S_vp  = compute_curvature_approx(
-        state, X, alpha=alpha, model_type=model_type, 
-        full_set_size=N)
-    Wz, WzT = compute_W_vps(
-        state, Z, model_type=model_type, 
-        full_set_size=None)
-    
-    dummy = WzT(jnp.zeros(D))
-    inner_shape = dummy.shape
-    d_z           = dummy.size
-    I_d_z         = jnp.eye(d_z, dtype=float)
-    WzTWz = build_WTW(Wz, WzT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
-    def Sz_inv_vp_woodbury_dense(v):
-        u = WzT(v).reshape(d_z)
-        x   = jax.scipy.linalg.solve(
-            beta_inv*I_d_z + alpha_inv*WzTWz,
-            u)
-        return alpha_inv*v - alpha_inv**2*Wz(x.reshape(inner_shape))
-    
-    
-    x0 = jnp.ones((D,), dtype=float)
-    sampler = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
-    probes = sampler(key)
-    st_sampler =  lambda _: probes
-    slq_sampler = lambda _: probes[:slq_samples]
-    
-    stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-16, s2=16)
-    # trace_term = alpha*stoch_trace(Sz_inv_vp_woodbury_dense)
-    def composite_vp(v):
-        return S_vp(Sz_inv_vp_woodbury_dense(v))
-    trace_term = stoch_trace(composite_vp)
-    
-    # ! SLQ
-    slq_num_matvecs = slq_num_matvecs if slq_num_matvecs is not None else int(M*0.8)
-    def slq_logdet(Xfun):
-        bidiag_sym = decomp.bidiag(slq_num_matvecs)
-        problem = funm.integrand_funm_product_logdet(bidiag_sym)
-        
-        estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
-        estimate = partial(estimator, Xfun)
-        keys = jax.random.split(key, slq_samples)
-        logdets = jax.lax.map(jax.checkpoint(estimate),keys)
-        return logdets.mean()
-                          
-    sqrt_alpha = jnp.sqrt(alpha)
-    sqrt_beta  = jnp.sqrt(beta)
-    def bidiag_target(v):
-        x, unravel_fn = jax.flatten_util.ravel_pytree(WzT(v))
-        return jnp.concatenate([sqrt_alpha * v, x])
-
-    logdet_term = slq_logdet(bidiag_target)
-    
-    return logdet_term + trace_term
-
-    
-    
+from src.slq import estimate_logdet_slq
 
 
 def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
-                                   st_samples=256, slq_samples=2, slq_num_matvecs=None):
-    """ MATRIX FREE
-    =========================================
-    Compute KL[ q(theta|Z) || q(theta|data) ]
-    =========================================
-    """
+                    st_samples=256, slq_samples=2, slq_num_matvecs=None,
+                    *, flat_params, unravel_fn):
     N = full_set_size
     M = Z.shape[0]
-    K = X.shape[0]
     beta = N / M
     alpha_inv = 1.0 / alpha
     beta_inv = 1.0 / beta
-    
-    D = count_model_params(state.params)
-    if model_type == 'regressor':
-        D -= 1 # subtract logvar parameter!
-    
-    # compute matrix free linear operator oracles
-    S_vp  = compute_curvature_approx(
-        state, X, alpha=alpha, model_type=model_type, 
-        full_set_size=N)
-    W, WT = compute_W_vps(
-        state, Z, model_type=model_type, 
-        full_set_size=None)
-    
-    dummy = WT(jnp.zeros(D))
-    inner_shape = dummy.shape
-    d_z           = dummy.size
-    I_d_z         = jnp.eye(d_z, dtype=float)
-    WTW = build_WTW(W, WT, inner_shape, d_z, dtype=float, block=1) # ! build dense WTW in blocks to lower memory pressure
-    def Sz_inv_vp_woodbury_dense(v):
-        u = WT(v).reshape(d_z)
-        x   = jax.scipy.linalg.solve(
-            beta_inv*I_d_z + alpha_inv*WTW,
-            u)
-        return alpha_inv*v - alpha_inv**2*W(x.reshape(inner_shape))
-    
-    
-    def composite_vp(v):
-        return S_vp(Sz_inv_vp_woodbury_dense(v))
-    
-    # Use same random vector probes for StochTrace and SLQ
-    x0 = jnp.ones((D,), dtype=float)
-    sampler = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
-    probes = sampler(key)
-    st_sampler =  lambda _: probes
-    slq_sampler = lambda _: probes[:slq_samples]
-    
-    stoch_trace = lambda vp: hutchpp(vp, st_sampler, s1=st_samples-16, s2=16)
-    trace_term = stoch_trace(composite_vp)
-    
-    slq_num_matvecs = min(slq_num_matvecs, M)
-    def slq_logdet(Xfun):
-        # Adapted from https://pnkraemer.github.io/matfree/Tutorials/1_compute_log_determinants_with_stochastic_lanczos_quadrature/
-        # BUT using bidiagonal reformulation. See paper/thesis for details.
-        bidiag_sym = decomp.bidiag(slq_num_matvecs)
-        problem = funm.integrand_funm_product_logdet(bidiag_sym)
-        
-        estimator = matfree_stochtrace.estimator(problem, sampler=slq_sampler)
-        estimate = partial(estimator, Xfun)
-        keys = jax.random.split(key, slq_samples)
-        logdets = jax.lax.map(jax.checkpoint(estimate),keys)
-        return logdets.mean()
-                          
-    sqrt_alpha = jnp.sqrt(alpha)
-    def bidiag_target(v):
-        x, unravel_fn = jax.flatten_util.ravel_pytree(WT(v))
-        return jnp.concatenate([sqrt_alpha * v, x])
 
-    logdet_term = slq_logdet(bidiag_target)
-    
-    return logdet_term + trace_term
+    D = sum(x.size for x in jax.tree_util.tree_leaves(unravel_fn(flat_params)))
+    if model_type == 'regressor': D -= 1
+
+    ggn_full = compute_curvature_approx(state, X, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+                                        full_set_size=N)
+    ggn_ip = compute_curvature_approx(state, Z, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+                                        full_set_size=N)
+    W, WT = compute_W_vps(state, Z, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+                                        full_set_size=None)
+
+    dummy       = WT(jnp.zeros(D, dtype=jnp.float32))
+    inner_shape = dummy.shape
+    d_z         = dummy.size
+    I_d         = jnp.eye(d_z, dtype=jnp.float32)
+    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=32)
+
+    def ggn_ip_inv(v):
+        # Woodbury inversion
+        u = WT(v).reshape(d_z)
+        x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u)
+        return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
+
+    def composite_vp(v):
+        return ggn_full(ggn_ip_inv(v))
+
+    key_trace, key_slq = jax.random.split(key, 2)
+    x0 = jnp.zeros((D,), dtype=jnp.float32)
+
+    trace_integrand = matfree_stochtrace.integrand_trace()
+    trace_sampler   = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
+    trace_estimator = partial(matfree_stochtrace.estimator(trace_integrand, sampler=trace_sampler), composite_vp)
+    trace_term      = jax.checkpoint(trace_estimator)(key_trace)
+
+    slq_num_matvecs = min(slq_num_matvecs, M)
+    logdet_term     = estimate_logdet_slq(ggn_ip, D=D, M=M, key=key_slq,
+                                          slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs)
+    return trace_term + logdet_term
 
 
 def ip_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
@@ -187,7 +82,7 @@ def ip_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
     
     trace_term = jnp.linalg.trace(S @ S_z_inv)
     
-    _, S_logdet = 0., 0. # jnp.linalg.slogdet(S)
+    _, S_logdet = jnp.linalg.slogdet(S)
     _, S_z_inv_logdet = jnp.linalg.slogdet(S_z_inv)
     logdet_term = - S_logdet - S_z_inv_logdet
     
@@ -196,81 +91,45 @@ def ip_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
 
 variational_grad_dense = jax.value_and_grad(ip_objective_dense)
 variational_grad_scalable = jax.value_and_grad(ip_objective_mf)
-variational_grad_og = jax.value_and_grad(direct_elbo_objective)
 
 
-@partial(jax.jit, static_argnames=('alpha', 'model_type', 'zoptimizer', 'num_mc_samples', 'full_set_size', 'scalable', 'st_samples', 'slq_samples', 'slq_num_matvecs'))
-def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples, model_type, Y=None, full_set_size=None, scalable=True,
-                  st_samples=256, slq_samples=2, slq_num_matvecs=None):
-    if Y is not None:
-        grad_fun = variational_grad_og
-        loss, grads = grad_fun(
-            Z, 
-            X, 
-            Y,
-            map_model_state, 
-            alpha, 
-            key=rng,
-            num_mc_samples=num_mc_samples,
-            model_type=model_type, 
-            full_set_size=full_set_size,
-            st_samples=st_samples, 
-            slq_samples=slq_samples, 
-            slq_num_matvecs=slq_num_matvecs
-        )
-    elif scalable:
-        # Mini-batched Inducing Points v1:
-        #   Sample at the level of optimize_step - i.e. each step is a new parameter sample ()
-        
-        # make mask along batch axis
-        ip_batchsize = 32
-        mask_idx = jax.random.permutation(jax.random.fold_in(rng, 1), Z.shape[0])[:ip_batchsize]
-
-        grads = jnp.zeros_like(Z)
-        Z_set = Z[mask_idx]
-        
-        # pdb.set_trace()
+@partial(jax.jit, static_argnames=('model_type','zoptimizer','num_mc_samples','full_set_size','scalable','st_samples','slq_samples','slq_num_matvecs','unravel_fn'))
+def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_mc_samples,
+                  model_type, full_set_size=None, scalable=True,
+                  st_samples=256, slq_samples=2, slq_num_matvecs=None,
+                  *, flat_params, unravel_fn):
+    if scalable:
         rng = jax.random.fold_in(rng, 2)
-        grad_fun = variational_grad_scalable
-        loss, new_grads = grad_fun(
-            Z_set, 
-            X, 
-            map_model_state, 
-            alpha, 
-            key=rng,
-            # num_mc_samples=num_mc_samples,
-            model_type=model_type, 
-            full_set_size=full_set_size,
-            st_samples=st_samples, 
-            slq_samples=slq_samples, 
-            slq_num_matvecs=slq_num_matvecs
+        loss, grads = variational_grad_scalable(
+            Z, X, map_model_state, alpha,
+            key=rng, model_type=model_type, full_set_size=full_set_size,
+            st_samples=st_samples, slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs,
+            flat_params=flat_params, unravel_fn=unravel_fn
         )
-        
-        grads = grads.at[mask_idx].set(new_grads)
-        
-    else: 
-        grad_fun = variational_grad_dense
-        loss, grads = grad_fun(
-            Z, 
-            X, 
-            map_model_state, 
-            alpha, 
-            key=rng,
-            # num_mc_samples=num_mc_samples,
-            model_type=model_type, 
-            full_set_size=full_set_size,
+    else:
+        loss, grads = variational_grad_dense(
+            Z, X, map_model_state, alpha,
+            key=rng, model_type=model_type, full_set_size=full_set_size,
+            flat_params=flat_params, unravel_fn=unravel_fn
         )
-    # updates, new_opt_state = zoptimizer.update(grads, opt_state)  # ? ADAM, SGD, etc.
-    updates, new_opt_state = zoptimizer.update(grads, opt_state, Z) # ? ADAMW
+    updates, new_opt_state = zoptimizer.update(grads, opt_state, Z)
     new_params = optax.apply_updates(Z, updates)
     return new_params, new_opt_state, loss
 
 
-def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, scalable, plot_type=None,
+def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, rng, num_mc_samples, alpha, num_steps, full_set_size, scalable, plot_type=None,
                           st_samples=256, slq_samples=2, slq_num_matvecs=None):
-    z = zinit
-    opt_state = zoptimizer.init(z)
-    # _iter = iter(dataloader)
+    Z = zinit
+    opt_state = zoptimizer.init(Z)
+    
+    # make state for optimizing alpha
+    alpha_tx = optax.adam(learning_rate=1e-2)
+    log_alpha_state = TrainState.create(
+        apply_fn=lambda p: p, 
+        params={'log_alpha': jnp.log(alpha)},
+        tx=alpha_tx,
+    )
+    
     _iter = make_iter(dataloader)
     
     def get_next_sample(num_batches=1):
@@ -295,39 +154,49 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
         ub = dataset_sample.max(axis=0)
         del dataset_sample
     
+    flat_params_map, unravel_fn_map = flatten_nn_params(map_state.params)
+    
     pbar = tqdm(range(num_steps))
     for step in pbar:
         dataset_sample = get_next_sample(num_batches=1)
         x_sample,y_sample = dataset_sample
         
-        # ! Common Random Numbers - does it work???
-        # if step % 4 == 0:
-        #     rng = jax.random.fold_in(rng, step) # ? TEST holding probes constant
         rng = jax.random.fold_in(rng, step)
         
-        z, opt_state, loss = optimize_step(
-            z, 
-            x_sample,
-            # Y=y_sample, # ! IMPORTANT: if this is uncommented, we use the original direct (and bad) ELBO formulation
-            map_model_state=map_model_state, 
-            alpha=alpha, 
-            opt_state=opt_state, 
-            rng=rng,
-            model_type=model_type,
-            zoptimizer=zoptimizer, 
-            num_mc_samples=num_mc_samples,
-            full_set_size=full_set_size,
-            scalable=scalable,
-            st_samples=st_samples, 
-            slq_samples=slq_samples, 
-            slq_num_matvecs=slq_num_matvecs
+        Z, opt_state, loss = optimize_step(
+            Z, x_sample,
+            map_model_state=map_state, alpha=alpha,
+            opt_state=opt_state, rng=rng, model_type=model_type, zoptimizer=zoptimizer,
+            num_mc_samples=num_mc_samples, full_set_size=full_set_size, scalable=scalable,
+            st_samples=st_samples, slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs,
+            flat_params=flat_params_map, unravel_fn=unravel_fn_map
         )
         
-        pbar.set_description_str(f"Loss: {loss:.3f}", refresh=True)
+        # Jointly optimize alpha by interleaving steps.
+        # After a burnin period, every x'th step, optimize alpha for y steps.
+        alpha_steps_every = 5
+        alpha_steps_per_call = 5
+        if (step % alpha_steps_every == 0) and step > 20:
+            rng, alpha_rng = jax.random.split(rng)
+            log_alpha_state, map_state = train_alpha(
+                map_state=map_state,
+                log_alpha_state=log_alpha_state,
+                Z=Z,
+                train_loader=dataloader,
+                test_loader=None,          # could pass a test loader
+                model_type=model_type,
+                num_steps=alpha_steps_per_call,
+                rng=alpha_rng,
+                slq_samples=slq_samples, 
+                slq_num_matvecs=slq_num_matvecs,
+                full_set_size=full_set_size
+            )
+            alpha = jnp.exp(log_alpha_state.params['log_alpha']).item()
         
-        # todo for debug: every 2 steps, record & plot
-        if (plot_type is not None) and (step % 2 == 0):
-            z_np = np.asarray(z)
+        pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
+        
+        if (plot_type is not None) and (step % 25 == 0):
+            z_np = np.asarray(Z)
             
             if plot_type in ['mnist', 'fmnist']:
                 plot_grayscale(z_np[:32].squeeze(), step, name=plot_type)
@@ -337,8 +206,7 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
                 
             elif plot_type in ['spiral', 'xor', 'banana']:
                 trajectory.append(z_np)
-
-                traj = np.stack(trajectory)    # shape (n_points, 2)
+                traj = np.stack(trajectory)
                 ax.clear()
                 ax.plot(traj[:, :, 0], traj[:,:, 1], '-o', color="black", markersize=2, zorder=7)
                 ax.set_xlim(lb[0] - 1.0, ub[0] + 1.0)
@@ -348,31 +216,20 @@ def train_inducing_points(map_model_state, zinit, zoptimizer, dataloader, model_
                 ax.set_title(f'Inducing Point Trajectory after {step} steps')
                 scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
 
-                # ! uncomment for backdrop (expensive)
-                # plot_lla_2D_classification_single(
-                #     fig, ax, map_model_state,
-                #     dataset_sample[0],
-                #     dataset_sample[1].squeeze(),
-                #     z_np,
-                #     alpha,
-                #     matrix_free=True,
-                #     num_mc_samples=500,
-                #     mode='ip_lla',
-                #     key=rng,
-                #     plot_Z=True,
-                #     # plot_X=True,
-                #     cbar=False
-                # )
-
-                plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
+                # expensive backdrop
+                plot_lla_2D_classification_single(
+                    fig, ax, map_state, dataset_sample[0], dataset_sample[1].squeeze(),
+                    z_np, alpha, matrix_free=True, num_mc_samples=32, mode='ip_lla', key=rng,
+                    plot_Z=True, cbar=False,
+                    flat_params=flat_params_map, unravel_fn=unravel_fn_map,
+                )
                 
-                # force a draw
+                plot_binary_classification_data(dataset_sample[0], dataset_sample[1].squeeze())
                 fig.canvas.draw()
                 fig.canvas.flush_events()
-                # plt.savefig(f"fig/toy/ips_{step}.png")
                 plt.savefig(f"fig/toy/ips.png")
                 
                 trajectory = trajectory[-3:]
         
     
-    return z
+    return Z
