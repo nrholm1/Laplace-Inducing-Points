@@ -146,36 +146,42 @@ def compute_ggn_dense(state, Z, model_type, *, flat_params, unravel_fn, full_set
     
 
 
-def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=64):
-    """
-    Return WᵀW ∈ R^{dxd} with ≤ (block · #params) peak memory.
-    """
-    @partial(jax.remat, static_argnums=1)          # k is static
+def build_WTW(W, WT, inner_shape, d, *, dtype=jnp.bfloat16, block=256):
+    compute_dtype = dtype
+    acc_dtype = jnp.float32 if compute_dtype in (jnp.bfloat16, jnp.float16) else compute_dtype
+
+    W_b  = jax.vmap(W,  in_axes=0, out_axes=0)
+    WT_b = jax.vmap(WT, in_axes=0, out_axes=0)
+
+    @partial(jax.remat, static_argnums=(1,))
     def col_block(start, k):
-        rows = start + jnp.arange(k, dtype=jnp.int32)        # shape (k,)
-        E    = jax.nn.one_hot(rows, d, dtype=dtype)\
-                  .reshape((k,) + inner_shape)               # (k, M, C)
-        cols = jax.vmap(lambda e: WT(W(e)).reshape(-1))(E)   # (k, d)
-        return cols.astype(dtype)                            # (k, d)
+        rows = start + jnp.arange(k, dtype=jnp.int32)
+        E = jax.nn.one_hot(rows, d, dtype=compute_dtype)\
+                .reshape((k,) + inner_shape)
+        WE   = W_b(E)                   
+        WTWE = WT_b(WE).reshape(k, d)   
+        return WTWE.T.astype(acc_dtype)        
 
-    WTW = jnp.zeros((d, d), dtype=dtype)
-
+    WTW = jnp.zeros((d, d), dtype=acc_dtype)
     n_full, tail = divmod(d, block)
 
-    def body(b, acc):
+    def body(carry, b):
         start = b * block
-        cols  = col_block(start, block)      # (block, d)
-        return jax.lax.dynamic_update_slice(acc, cols.T, (0, start))
+        colsT = col_block(start, block)
+        carry = jax.lax.dynamic_update_slice(carry, colsT, (0, start))
+        return carry, None
 
-    WTW = jax.lax.fori_loop(0, n_full, body, WTW)
+    # main blocks
+    WTW, _ = jax.lax.scan(body, WTW, jnp.arange(n_full, dtype=jnp.int32))
 
-    # Tail slice, checkpointed
+    # tail block
     if tail:
         start  = n_full * block
-        cols_t = col_block(start, tail).T    # (d, tail)
+        cols_t = col_block(start, tail)
         WTW    = jax.lax.dynamic_update_slice(WTW, cols_t, (0, start))
 
-    return jnp.triu(WTW) + jnp.triu(WTW, 1).T
+    return 0.5 * (WTW + WTW.T)
+
         
 
 
