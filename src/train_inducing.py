@@ -48,21 +48,13 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     inner_shape = dummy.shape
     d_z         = dummy.size
     I_d         = jnp.eye(d_z, dtype=jnp.float32)
-    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=1)
-
-    A   = beta_inv * I_d + alpha_inv * WTW
-    A   = 0.5 * (A + A.T) + (1e-6 * (jnp.mean(jnp.diag(A)) + 1.0)) * I_d
-    L   = jnp.linalg.cholesky(A)
-
-    def solve_A(u):
-        y = jax.scipy.linalg.solve_triangular(L, u, lower=True)
-        x = jax.scipy.linalg.solve_triangular(L.T, y, lower=False)
-        return x
+    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=32)
 
     def ggn_ip_inv(v):
+        # Woodbury inversion
         u = WT(v).reshape(d_z)
-        x = solve_A(u)
-        return alpha_inv * v - (alpha_inv ** 2) * W(x.reshape(inner_shape))
+        x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u)
+        return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
 
     def composite_vp(v):
         return ggn_full(ggn_ip_inv(v))
