@@ -175,15 +175,14 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         # Jointly optimize alpha by interleaving steps.
         # After a burnin period, every x'th step, optimize alpha for y steps.
         alpha_steps_every = 5
-        alpha_steps_per_call = 5
+        alpha_steps_per_call = 15
         if (step % alpha_steps_every == 0) and step > 20:
             rng, alpha_rng = jax.random.split(rng)
             log_alpha_state, map_state = train_alpha(
                 map_state=map_state,
                 log_alpha_state=log_alpha_state,
                 Z=Z,
-                train_loader=dataloader,
-                test_loader=None,          # could pass a test loader
+                get_batch_fn=lambda: get_next_sample(num_batches=1)[0],
                 model_type=model_type,
                 num_steps=alpha_steps_per_call,
                 rng=alpha_rng,
