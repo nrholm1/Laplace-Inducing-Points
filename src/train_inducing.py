@@ -34,15 +34,12 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     D = sum(x.size for x in jax.tree_util.tree_leaves(unravel_fn(flat_params)))
     if model_type == 'regressor': D -= 1
 
-    ggn_full = compute_curvature_approx(state, X, alpha=alpha, model_type=model_type,
-                                        flat_params=flat_params, unravel_fn=unravel_fn,
+    ggn_full = compute_curvature_approx(state, X, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
                                         full_set_size=N)
-    ggn_ip = compute_curvature_approx(state, Z, alpha=alpha, model_type=model_type,
-                                      flat_params=flat_params, unravel_fn=unravel_fn,
-                                      full_set_size=N)
-    W, WT = compute_W_vps(state, Z, model_type=model_type,
-                          flat_params=flat_params, unravel_fn=unravel_fn,
-                          full_set_size=None)
+    ggn_ip = compute_curvature_approx(state, Z, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+                                        full_set_size=N)
+    W, WT = compute_W_vps(state, Z, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+                                        full_set_size=None)
 
     dummy       = WT(jnp.zeros(D, dtype=jnp.float32))
     inner_shape = dummy.shape
@@ -198,7 +195,7 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         
         pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
         
-        if (plot_type is not None) and (step % 6 == 0):
+        if (plot_type is not None) and (step % 25 == 0):
             z_np = np.asarray(Z)
             
             if plot_type in ['mnist', 'fmnist']:
