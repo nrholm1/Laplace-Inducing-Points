@@ -154,7 +154,6 @@ def main():
         model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
 
     # Load optimization config (combined for MAP and inducing)
-    # opt_cfg = load_yaml(args.optimization_config)
     opt_cfg = cfg['optimization']
     alpha = opt_cfg["alpha"]
     map_cfg = opt_cfg["map"]
@@ -240,20 +239,6 @@ def main():
     train_loader_induc, *_ = get_dataloaders(dataset=args.dataset, batch_size=inducing_batch_size)
     # zinit = jax.random.uniform(minval=-1,maxval=1, shape=zinit.shape, key=jax.random.PRNGKey(54545))
     
-    alpha_ip = args.alpha_ip
-    if alpha_ip is None:
-        alpha_ip = grid_search_alpha(map_state,
-                             zinit,
-                             val_loader,
-                             full_set_size=full_set_size,
-                             model_type=model_cfg["type"],
-                             num_mc_samples=ip_cfg["mc_samples"],
-                             scalable=True,
-                             log10_min=-3,
-                             log10_max=1,
-                             n_coarse=16
-                             )
-
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_inducing)
         
@@ -265,7 +250,7 @@ def main():
             rng=rng_inducing,
             model_type=model_type,
             num_mc_samples=mc_samples,
-            alpha=alpha_ip,
+            alpha=args.alpha_ip,
             num_steps=epochs_inducing,
             full_set_size=opt_cfg['full_set_size'],
             scalable=args.scalable,
