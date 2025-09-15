@@ -72,7 +72,7 @@ def small_model_state(regression_1d_data):
 
 @pytest.fixture
 def toyregressor_state():
-    model_cfg = load_yaml("config/toyregressor_sine.yml")
+    model_cfg = load_yaml("config/toy/toyregressor_sine.yml")['model']
     model_type = "regressor"
     num_h = model_cfg["num_h"]
     num_l = model_cfg["num_l"]
@@ -81,7 +81,7 @@ def toyregressor_state():
     model = SimpleRegressor(numh=num_h, numl=num_l)
     rng_model = jax.random.PRNGKey(model_cfg["rng_seed"])
     dummy_inp = jax.random.normal(rng_model, shape=(num_h, 1))
-    variables = model.init(rng_model, dummy_inp)
+    variables = model.init(rng_model, dummy_inp)['params']
 
     optimizer_map = optax.adam(1e-3)
     model_state = train_state.TrainState.create(
@@ -151,14 +151,14 @@ def classification_2d_data():
 def classifier_state():
     # Load the YAML configuration file.
     config_path = "config/toy/toyclassifier_xor.yml"
-    config = load_yaml(config_path)
+    model_config = load_yaml(config_path)['model']
     
     # Extract configuration parameters.
-    model_type = config.get("model_type", "classifier")  # defaults to classifier
-    num_h = config["num_h"]
-    num_l = config["num_l"]
-    num_c = config.get("num_c", 2)
-    model_seed = config["rng_seed"]
+    model_type = model_config.get("model_type", "classifier")  # defaults to classifier
+    num_h = model_config["num_h"]
+    num_l = model_config["num_l"]
+    num_c = model_config.get("num_c", 2)
+    model_seed = model_config["seed"]
 
     # Instantiate the classifier.
     model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
@@ -166,7 +166,7 @@ def classifier_state():
     # Initialize the model parameters.
     # dummy_inp = jax.random.normal(rng_inp, shape=(num_h, num_c))
     dummy_inp = jnp.ones((1, 2))
-    variables = model.init(jax.random.PRNGKey(model_seed), dummy_inp)
+    variables = model.init(jax.random.PRNGKey(model_seed), dummy_inp)['params']
 
     optimizer_map = optax.adam(1e-3)
     # model_state = train_state.TrainState.create(

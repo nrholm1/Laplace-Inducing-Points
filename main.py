@@ -17,7 +17,7 @@ set_style('darkgrid')
 from src.scalemodels import TrainState, EMPTY_STATS
 from src.toymodels import SimpleRegressor, SimpleClassifier
 from src.toydata import get_dataloaders, load_toydata
-from src.nplot import make_comparison_figure, make_predictive_mean_figure, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
+from src.nplot import make_comparison_figure, make_predictive_mean_figure, make_predictive_mean_figure2, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
 
 from src.train_map import train_map
 from src.train_inducing import train_inducing_points
@@ -190,7 +190,7 @@ def main():
     optimizer_map = optax.adam(lr_map)
     model_state = TrainState.create(
         apply_fn=model.apply,
-        params=variables,
+        params=variables['params'],
         tx=optimizer_map,
         batch_stats = variables.get('batch_stats', EMPTY_STATS),
     )
@@ -198,7 +198,7 @@ def main():
 
     # =========== PART A: MAP TRAINING ===========
     if args.mode in ["train_map", "full_pipeline"]:
-        map_model_state = train_map(
+        map_state = train_map(
             model_state,
             train_loader,
             test_loader,
@@ -208,14 +208,14 @@ def main():
         )
         
         save_checkpoint(
-            train_state=map_model_state,
+            train_state=map_state,
             ckpt_dir=args.ckpt_map,
             prefix=map_ckpt_prefix,
             step=epochs_map
         )
         
         train_data,test_data,_ = load_toydata(args.dataset) # get train/test data for plots
-        plot_map(map_model_state, 
+        plot_map(map_state, 
                  train_data,
                  test_data, 
                  alpha, 
@@ -226,7 +226,7 @@ def main():
         if args.mode == "train_map":
             return
     else:
-        map_model_state = load_checkpoint(
+        map_state = load_checkpoint(
             ckpt_dir=args.ckpt_map,
             prefix=map_ckpt_prefix,
             target=model_state
@@ -238,10 +238,11 @@ def main():
     train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_inducing)
     zinit = next(iter(train_loader_init))[0]
     train_loader_induc, *_ = get_dataloaders(dataset=args.dataset, batch_size=inducing_batch_size)
+    # zinit = jax.random.uniform(minval=-1,maxval=1, shape=zinit.shape, key=jax.random.PRNGKey(54545))
     
     alpha_ip = args.alpha_ip
     if alpha_ip is None:
-        alpha_ip = grid_search_alpha(map_model_state,
+        alpha_ip = grid_search_alpha(map_state,
                              zinit,
                              val_loader,
                              full_set_size=full_set_size,
@@ -257,7 +258,7 @@ def main():
         zoptimizer = optax.adam(lr_inducing)
         
         zinducing = train_inducing_points(
-            map_model_state, 
+            map_state, 
             zinit, 
             zoptimizer,
             dataloader=train_loader_induc,
@@ -295,6 +296,8 @@ def main():
     if args.mode in ["visualize", "full_pipeline"]:
         os.makedirs("fig", exist_ok=True)
         
+        flat_params_map, unravel_fn_map = flatten_nn_params(map_state.params)
+        
         fig, ax = plt.subplots(1, 2, figsize=(13, 5))
         full_lla = args.full
         if full_lla:
@@ -305,7 +308,7 @@ def main():
         plot_lla_2D_classification(
             fig,
             ax,
-            map_model_state,
+            map_state,
             xtrain,
             ytrain,
             zinducing,
@@ -314,12 +317,12 @@ def main():
             mode="full_lla" if args.full else "ip_lla",
             matrix_free=args.scalable,
             num_mc_samples=args.num_mc_samples_lla,
-            plot_Z=args.plot_Z,
+            # plot_Z=args.plot_Z,
+            plot_Z=not full_lla,
             plot_X=args.plot_X,
+            flat_params=flat_params_map, 
+            unravel_fn=unravel_fn_map,
         )
-        for axi in ax:
-            scatterp(*zinducing.T, color="yellow", zorder=8, marker="X", label="Inducing points", ax=axi)
-        # pdb.set_trace()
         plt.tight_layout()
         suffix_if_matrixfree = '_mf' if args.scalable else ''
         plt.savefig(f"fig/{args.dataset}_{model_type}_lla_{'full' if args.full else 'ip'}{suffix_if_matrixfree}.pdf")
@@ -327,30 +330,8 @@ def main():
         # ! LA vs LLA example plot!
         # make_predictive_mean_figure(map_model_state, xtrain, ytrain, alpha, num_mc_samples=args.num_mc_samples_lla)
         # plt.savefig(f"fig/la_vs_lla.pdf", dpi=300, bbox_inches="tight")
-        
-        # ! XOR varying M plot!
-        # XOR: (32, 2.5e-03), (16, 1.2e-02), (8, 8e-02)
-        # m = 16
-        # alpha = {
-        #     8:  8e-02,
-        #     16: 1.2e-02,
-        #     32: 2.5e-03,
-        #     1000: 1e-3
-        # }[m]
-        # (xtrain,ytrain),*_ = load_toydata(args.dataset)
-        # # zinducing = xtrain
-        # make_comparison_figure(map_model_state, xtrain, zinducing, alpha, matrix_free=False, num_mc_samples=args.num_mc_samples_lla)
-        # plt.savefig(f"fig/xor-evolution-{m}.pdf", dpi=300, bbox_inches="tight")
-        
-        # ! BANANA
-        # mcs   = 10
-        # k     = 80
-        # alpha = 1e-03
-        # (xtrain,ytrain),*_ = load_toydata(args.dataset)
-        # # zinducing = xtrain
-        # make_comparison_figure(map_model_state, xtrain, zinducing, alpha, matrix_free=True, num_mc_samples=mcs)
-        # plt.savefig(f"fig/banana-evolution-{k}-{mcs}.pdf", dpi=300, bbox_inches="tight")
-        
+        # make_predictive_mean_figure2(map_model_state, xtrain, ytrain, alpha, num_mc_samples=args.num_mc_samples_lla)
+        # plt.savefig(f"fig/banana.pdf", dpi=300, bbox_inches="tight")
         
         
         print("[DONE] Visualization complete.")

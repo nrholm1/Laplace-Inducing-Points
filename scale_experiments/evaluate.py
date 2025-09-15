@@ -101,7 +101,8 @@ def batch_nll(state, x, y, Z, *, alpha, full_set_size,
 
     if scalable:
         logit_samples = predict_lla_scalable(
-            state, x,
+            state, 
+            x,
             Z,
             model_type=model_type,
             alpha=alpha,
@@ -267,7 +268,7 @@ def main():
 
     if args.dataset in ["spiral", "banana"]: # todo implement more toy datasets?
         train_loader, test_loader, _ = get_toydataloaders(args.dataset, batch_size)
-        # train_loader, _, _ = get_toydataloaders(args.dataset, 400)
+        train_loader, _, _ = get_toydataloaders(args.dataset, 400)
     else:
         train_loader, test_loader, _ = get_dataloaders(args.dataset, batch_size)
     
@@ -302,7 +303,7 @@ def main():
             step=epochs_inducing
         )
     # ! plotting code
-    # xtrain,ytrain = next(iter(train_loader))
+    xtrain,ytrain = next(iter(train_loader))
     # pdb.set_trace()
     # from src.nplot import make_comparison_figure, plot_binary_classification_data
     # ood_loader, _, _ = get_toydataloaders(args.ood_dataset, 256)
@@ -312,22 +313,27 @@ def main():
     # plot_binary_classification_data(xood, yood.squeeze(), axs[1])
     # plt.savefig("fig/test.pdf", dpi=300, bbox_inches="tight")
     
-    # --------------   evaluation   --------------------
-    iters = 3
+
+    iters = 10
     rng = jax.random.PRNGKey(155858)
+
+    nlls, accs, bris, cals, times, aurocs = [], [], [], [], [], []
+
     for i in range(iters):
         t0 = time.time()
         rng = jax.random.fold_in(rng, i)
-        nll, acc, bri, cal, probs, labels = eval_dataset_extended(state,
-                                test_loader,
-                                Z,
-                                # xtrain,
-                                rng=rng,
-                                alpha=alpha,
-                                full_set_size=full_set_size,
-                                model_type=model_cfg["type"],
-                                num_mc_samples=ip_cfg["mc_samples"],
-                                scalable=args.scalable)
+        nll, acc, bri, cal, probs, labels = eval_dataset_extended(
+            state,
+            test_loader,
+            Z,
+            # xtrain,
+            rng=rng,
+            alpha=alpha,
+            full_set_size=full_set_size,
+            model_type=model_cfg["type"],
+            num_mc_samples=ip_cfg["mc_samples"],
+            scalable=args.scalable
+        )
         dt = time.time() - t0
 
         print(f"\nTest NLL   : {nll:8.5f}"
@@ -336,19 +342,40 @@ def main():
             f"\nECE (15bin): {cal:8.5f}"
             f"\nTime       : {dt:6.1f} s")
 
+        nlls.append(nll)
+        accs.append(acc)
+        bris.append(bri)
+        cals.append(cal)
+        times.append(dt)
+
         rng = jax.random.fold_in(rng, i)
         if ood_loader is not None:
-            auroc = auroc_ood(state,
-                            probs,
-                            ood_loader,
-                            Z,
-                            alpha=alpha,
-                            rng=rng,
-                            full_set_size=full_set_size,
-                            model_type=model_cfg["type"],
-                            num_mc_samples=ip_cfg["mc_samples"],
-                            scalable=args.scalable)
+            auroc = auroc_ood(
+                state,
+                probs,
+                ood_loader,
+                Z,
+                # xtrain,
+                alpha=alpha,
+                rng=rng,
+                full_set_size=full_set_size,
+                model_type=model_cfg["type"],
+                num_mc_samples=ip_cfg["mc_samples"],
+                scalable=args.scalable
+            )
             print(f"OOD AUROC  : {auroc*100:8.3f} %")
+            aurocs.append(auroc)
+
+    print("\n=== STATS OVER ALL ITERATIONS ===")
+    print("\n=== STATISTICS OVER ALL ITERATIONS ===")
+    print(f"Mean Acc        : {r'\('}{np.mean(accs)*100:8.3f} {r'~\pm~'} {np.std(accs)*100:6.3f}{r'\)'}")
+    print(f"Mean NLL        : {r'\('}{np.mean(nlls):8.5f} {r'~\pm~'} {np.std(nlls):6.5f}{r'\)'}")
+    print(f"Mean Brier      : {r'\('}{np.mean(bris):8.5f} {r'~\pm~'} {np.std(bris):6.5f}{r'\)'}")
+    print(f"Mean ECE (15bin): {r'\('}{np.mean(cals):8.5f} {r'~\pm~'} {np.std(cals):6.5f}{r'\)'}")
+    print(f"Mean Time       : {np.mean(times):6.1f} s {r'~\pm~'} {np.std(times):5.1f} s")
+    if ood_loader is not None and aurocs:
+        print(f"Mean OOD AUROC  : {r'\('}{np.mean(aurocs)*100:8.3f} {r'~\pm~'} {np.std(aurocs)*100:6.3f}{r'\)'}")
+
 
 if __name__ == "__main__":
     main()

@@ -40,7 +40,7 @@ datamain = src/toydata.py
 
 DEVICE = cpu
 
-DATASET = spiral
+DATASET = banana
 MODEL = toyclassifier
 SCALE_DATASET = cifar10
 SCALE_MODEL = resnet1
@@ -86,23 +86,21 @@ seval:
 train_map:
 	$(MAKE) run mode=train_map
 train_inducing:
-	$(MAKE) run mode=train_inducing EXTRA_ARGS="--alpha_ip 1e-03"
+	$(MAKE) run mode=train_inducing EXTRA_ARGS="--alpha_ip 2.5e-03"
 strain_inducing:
-	$(MAKE) run mode=train_inducing EXTRA_ARGS="--scalable --alpha_ip 1e-2"
+	$(MAKE) run mode=train_inducing EXTRA_ARGS="--scalable --alpha_ip 2.5e-03"
 full_pipeline:
 	$(MAKE) run mode=full_pipeline
 sfull_pipeline:
 	$(MAKE) run mode=full_pipeline EXTRA_ARGS=--scalable
 visualize:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--alpha_ip 1"
+	$(MAKE) run mode=visualize EXTRA_ARGS="--alpha_ip 6e-03"
 visualize_full:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--full --alpha_ip 1"
+	$(MAKE) run mode=visualize EXTRA_ARGS="--full --alpha_ip 1e-03"
 svisualize:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs) --alpha_ip 1"
+	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs) --alpha_ip 2.5e-03"
 svisualize_full:
 	$(MAKE) run mode=visualize EXTRA_ARGS="--full --scalable --num_mc_samples_lla $(mcs)"
-
-# 2.921e-01
 
 
 # XOR: (32, 2.5e-03), (16, 1.2e-02), (8, 8e-02)

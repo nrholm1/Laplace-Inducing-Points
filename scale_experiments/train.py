@@ -1,13 +1,7 @@
 import argparse
 import math
-import os
-import pdb
 
 import jax
-import jax.numpy as jnp
-import matplotlib as mpl
-import numpy as np
-from flax.training import train_state
 import optax
 
 import matplotlib.pyplot as plt
@@ -19,7 +13,6 @@ from src.train_map import train_map
 from src.grid_search import grid_search_alpha
 from src.train_inducing import train_inducing_points
 from src.utils import flatten_nn_params, load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
-from src.train_alpha import train_map_then_alpha
 
 # jax.config.update("jax_transfer_guard", "log")
 
@@ -102,18 +95,6 @@ def main():
             alpha=alpha,
             num_epochs=epochs_map
         )
-        # map_model_state, alpha = train_map_then_alpha(
-        #     model_state,
-        #     train_loader,
-        #     test_loader,
-        #     model_type=model_type,
-        #     num_epochs=epochs_map,
-        #     alpha0=alpha,
-        #     alpha_lr=1e-2,
-        #     alpha_every=5,
-        #     burnin=25,
-        #     full_set_size=full_set_size,
-        # )
         save_checkpoint(
             train_state=map_model_state,
             ckpt_dir=args.ckpt_map,

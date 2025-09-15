@@ -1,121 +1,118 @@
+from functools import partial
+from typing import Iterable, Optional
 import jax
 import jax.numpy as jnp
-import optax
-from tqdm import tqdm
-from typing import Iterable, Tuple
 
 from src.data import make_iter
-from src.ggn  import build_WTW, compute_W_vps
-from src.lla  import compute_curvature_approx
+from src.train_map import log_joint
+from src.lla import compute_curvature_approx
 from src.utils import count_model_params, flatten_nn_params
-from src.train_map import _eval_classification, _eval_regression, _map_step
+from src.slq import estimate_logdet_slq
 
-def log_marginal_likelihood(
-        alpha: float,
-        X,
-        state,
+
+@partial(jax.jit, static_argnames=('model_type', 'slq_samples', 'slq_num_matvecs', 'full_set_size', 'unravel_fn'))
+def optimize_alpha_step(
+        *,
+        log_alpha_state,
+        Z,
+        map_state,
+        batch,
         model_type: str,
-        full_set_size: int | None = None
-) -> jnp.ndarray:
-    """Return log p(D|α) up to α-independent constants."""
-    N = full_set_size or X.shape[0]
-    rescale = N / X.shape[0]
+        key,
+        slq_samples: int = 1,
+        slq_num_matvecs: int = 32,
+        full_set_size = None,
+        flat_params, 
+        unravel_fn,
+    ):
+    # log joint given data batch
+    def log_joint_term(alpha, batch_stats):
+        return log_joint(map_state.params,
+                         batch_stats,
+                         map_state,
+                         batch, 
+                         alpha, 
+                        model_type)
     
-    D = count_model_params(state.params['params'])
+    # log determinant
+    D = count_model_params(map_state.params)
     if model_type == "regressor":
         D -= 1
+    M = int(Z.shape[0])
+    def logdet_term(alpha):
+        Sz_vp = compute_curvature_approx(
+            map_state, Z, alpha=alpha, model_type=model_type, full_set_size=full_set_size, flat_params=flat_params, unravel_fn=unravel_fn,
+        )
+        return estimate_logdet_slq(
+            Sz_vp,
+            D=D,
+            M=M,
+            key=key,
+            slq_samples=slq_samples,
+            slq_num_matvecs=slq_num_matvecs,
+        )
 
-    W, WT = compute_W_vps(state, X, model_type, full_set_size=None)
+    def loss_and_aux(params, batch_stats):
+        log_alpha = params['log_alpha']
+        alpha = jnp.exp(log_alpha)
+        (neg_log_post, new_bs) = log_joint_term(alpha, batch_stats)
+        prior_normalizer = -0.5 * D * log_alpha
+        logdet = logdet_term(alpha)
+        return neg_log_post + prior_normalizer + .5 * logdet, new_bs
+    
+    (loss, new_bs), grad_alpha = jax.value_and_grad(
+            loss_and_aux, argnums=0, has_aux=True
+        )(log_alpha_state.params, map_state.batch_stats)
 
-    dummy  = WT(jnp.zeros(D, dtype=float))
-    d      = dummy.size
-    WTW    = build_WTW(W, WT, dummy.shape, d, dtype=float, block=1)
-
-    # log |H|  where  H = αI + β WᵀW
-    _, logdet_lowrank = jnp.linalg.slogdet(jnp.eye(d) + rescale / alpha * WTW)
-    logdet_term       = logdet_lowrank + D * jnp.log(alpha)
-
-    # Gaussian log-prior
-    flat_p, _ = flatten_nn_params(state.params['params'])
-    quad      = -0.5 * alpha * jnp.dot(flat_p, flat_p)
-    norm      = 0.5 * D * jnp.log(alpha)
-    log_prior = quad + norm
-
-    return log_prior - 0.5 * logdet_term
-
-
-def update_alpha(
-        log_alpha: jnp.ndarray,
-        opt_state: optax.OptState,
-        opt:       optax.GradientTransformation,
-        *lm_args
-) -> Tuple[jnp.ndarray, optax.OptState]:
-    """Gradient-ascent on log α (implemented as optax *descent* on −L)."""
-    def loss_fn(lalpha):
-        return -log_marginal_likelihood(jnp.exp(lalpha), *lm_args)
-    grad   = jax.grad(loss_fn)(log_alpha)
-    updates, new_state = opt.update(grad, opt_state, log_alpha)
-    new_log_alpha      = optax.apply_updates(log_alpha, updates)
-    return new_log_alpha, new_state
+    new_log_alpha_state = log_alpha_state.apply_gradients(grads=grad_alpha)
+    new_map_state = map_state.replace(batch_stats=new_bs)
+    return new_log_alpha_state, new_map_state, loss
+    
+    
 
 
-# ────────────────────────────────────────────────────────────────────────────
-#   Full training loop: interleave MAP steps on θ with α hyper-steps
-# ────────────────────────────────────────────────────────────────────────────
-def train_map_then_alpha(
-        state,
-        train_loader: Iterable,
-        test_loader:  Iterable,
-        *,
-        model_type:    str,
-        num_epochs:    int   = 500,
-        alpha0:        float = 1.0,
-        alpha_lr:      float = 5e-2,
-        alpha_every:   int   = 5,
-        burnin:        int   = 100,
-        full_set_size: int | None = None):
+def train_alpha(
+    map_state,
+    log_alpha_state,
+    Z,
+    train_loader: Iterable,
+    test_loader: Optional[Iterable] = None,  # currently unused
+    *,
+    model_type: str,
+    num_steps: int,
+    rng=None,
+    slq_samples: int = 1,
+    slq_num_matvecs: int = 32,
+    full_set_size = None
+):
+    """
+    Optimizes alpha for `num_steps` passes over `train_loader`.
 
-    log_alpha = jnp.array(jnp.log(alpha0), dtype=float)
-    opt_h     = optax.adam(alpha_lr)
-    opt_hs    = opt_h.init(log_alpha)
+    Returns:
+      alpha_state, map_state
+    """
+    if rng is None:
+        rng = jax.random.PRNGKey(0)
 
-    eval_step = _eval_regression if model_type == "regressor" else _eval_classification
-    pbar      = tqdm(range(num_epochs), ncols=95)
+    flat_params, unravel_fn = flatten_nn_params(map_state.params)
+    batches = make_iter(train_loader)
 
-    for epoch in pbar:
-        # ── MAP optimisation of θ ──────────────────────────────────────────
-        for batch in make_iter(train_loader):
-            state, _ = _map_step(state, batch, model_type, jnp.exp(log_alpha))
+    for _ in range(num_steps):
+        batch = next(batches)
+        rng, subkey = jax.random.split(rng)
 
-        # ── Hyper-step on α every k epochs ────────────────────────────────
-        if (epoch >= burnin) and ((epoch + 1) % alpha_every == 0):
-            log_alpha, opt_hs = update_alpha(
-                log_alpha, 
-                opt_hs, 
-                opt_h,
-                batch[0],
-                state,
-                model_type,
-                full_set_size
-            )
+        log_alpha_state, map_state, loss = optimize_alpha_step(
+            log_alpha_state=log_alpha_state,
+            Z=Z,
+            map_state=map_state,
+            batch=batch,
+            model_type=model_type,
+            key=subkey,
+            slq_samples=slq_samples,
+            slq_num_matvecs=slq_num_matvecs,
+            full_set_size=full_set_size,
+            flat_params=flat_params, 
+            unravel_fn=unravel_fn,
+        )
 
-        # ── Periodic evaluation ───────────────────────────────────────────
-        if epoch % 4 == 0:
-            test_loss = test_acc = 0.0
-            for batch in make_iter(test_loader):
-                metrics = eval_step(state, batch)
-                test_loss += metrics[0]
-                if model_type == "classifier":
-                    test_acc += metrics[1]
-            n = len(test_loader)
-            if model_type == "classifier":
-                descr = (f"[NLL={test_loss / n:6.4f}  "
-                         f"ACC={test_acc / n:5.3f}  "
-                         f"α={jnp.exp(log_alpha):6.4f}]")
-            else:
-                descr = (f"[NLL={test_loss / n:6.4f}  "
-                         f"α={jnp.exp(log_alpha):6.4f}]")
-            pbar.set_description(descr)
-
-    # return state.replace(alpha=jnp.exp(log_alpha)), jnp.exp(log_alpha)
-    return state, jnp.exp(log_alpha)
+    return log_alpha_state, map_state
