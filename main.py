@@ -175,12 +175,12 @@ def main():
     print_summary(variables)
 
     ip_cfg = opt_cfg["ip"]
-    m_inducing = ip_cfg["m"]
-    epochs_inducing = ip_cfg["epochs"]
-    inducing_batch_size = ip_cfg["batch_size"]
-    lr_inducing = ip_cfg["lr"]
+    m_ip = ip_cfg["m"]
+    epochs_ip = ip_cfg["epochs"]
+    batch_size_ip = ip_cfg["batch_size"]
+    lr_ip = ip_cfg["lr"]
     mc_samples = ip_cfg["mc_samples"]
-    seed_inducing = ip_cfg["seed"]
+    seed_ip = ip_cfg["seed"]
     st_samples      = ip_cfg.get("st_samples", 256)
     slq_samples     = ip_cfg.get("slq_samples", 4)
     slq_num_matvecs = ip_cfg.get("slq_num_matvecs", 32)
@@ -233,25 +233,29 @@ def main():
 
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
-    rng_inducing = jax.random.PRNGKey(seed_inducing)
-    train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_inducing)
+    rng_ip = jax.random.PRNGKey(seed_ip)
+    # todo here: smart initialization
+    
+    train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_ip)
     zinit = next(iter(train_loader_init))[0]
-    train_loader_induc, *_ = get_dataloaders(dataset=args.dataset, batch_size=inducing_batch_size)
-    # zinit = jax.random.uniform(minval=-1,maxval=1, shape=zinit.shape, key=jax.random.PRNGKey(54545))
+    
+    
+    train_loader_ip, *_ = get_dataloaders(dataset=args.dataset, batch_size=batch_size_ip)
+
     
     if args.mode in ["train_inducing", "full_pipeline"]:
-        zoptimizer = optax.adam(lr_inducing)
+        zoptimizer = optax.adam(lr_ip)
         
-        zinducing = train_inducing_points(
+        z_ip = train_inducing_points(
             map_state, 
             zinit, 
             zoptimizer,
-            dataloader=train_loader_induc,
-            rng=rng_inducing,
+            dataloader=train_loader_ip,
+            rng=rng_ip,
             model_type=model_type,
             num_mc_samples=mc_samples,
             alpha=args.alpha_ip,
-            num_steps=epochs_inducing,
+            num_steps=epochs_ip,
             full_set_size=opt_cfg['full_set_size'],
             scalable=args.scalable,
             plot_type=args.dataset,
@@ -262,19 +266,19 @@ def main():
 
         # Save the inducing points (zinduc)
         save_array_checkpoint(
-            array=zinducing,
+            array=z_ip,
             ckpt_dir=args.ckpt_induc,
             name=induc_ckpt_name,
-            step=epochs_inducing
+            step=epochs_ip
         )
     
         print("[DONE] Inducing training.")
     else:
         # Load both the inducing points (zinduc)
-        zinducing = load_array_checkpoint(
+        z_ip = load_array_checkpoint(
             ckpt_dir=args.ckpt_induc,
             name=induc_ckpt_name,
-            step=epochs_inducing
+            step=epochs_ip
         )
 
     # =========== PART C: Visualization ===========
@@ -288,7 +292,7 @@ def main():
         if full_lla:
             plt.title(f"Full LLA / {opt_cfg['full_set_size']} data points")
         else:
-            plt.title(f"IP LLA / {m_inducing} inducing points, {epochs_inducing} steps")
+            plt.title(f"IP LLA / {m_ip} inducing points, {epochs_ip} steps")
         (xtrain,ytrain),*_ = load_toydata(args.dataset)
         plot_lla_2D_classification(
             fig,
@@ -296,9 +300,9 @@ def main():
             map_state,
             xtrain,
             ytrain,
-            zinducing,
-            alpha_ip,
-            key=jax.random.fold_in(jax.random.PRNGKey(seed_inducing), 1),
+            z_ip,
+            args.alpha_ip,
+            key=jax.random.fold_in(jax.random.PRNGKey(seed_ip), 1),
             mode="full_lla" if args.full else "ip_lla",
             matrix_free=args.scalable,
             num_mc_samples=args.num_mc_samples_lla,
