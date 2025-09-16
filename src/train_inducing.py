@@ -36,16 +36,17 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
 
     ggn_full = compute_curvature_approx(state, X, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
                                         full_set_size=N)
-    ggn_ip = compute_curvature_approx(state, Z, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+    ggn_ip   = compute_curvature_approx(state, Z, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
                                         full_set_size=N)
-    W, WT = compute_W_vps(state, Z, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+    W, WT    = compute_W_vps(state, Z, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
                                         full_set_size=None)
 
-    dummy       = WT(jnp.zeros(D, dtype=jnp.float32))
+    x0          = jnp.zeros((D,), dtype=jnp.float32)
+    dummy       = WT(x0)
     inner_shape = dummy.shape
     d_z         = dummy.size
     I_d         = jnp.eye(d_z, dtype=jnp.float32)
-    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=32)
+    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M,32))
 
     def ggn_ip_inv(v):
         # Woodbury inversion
@@ -70,14 +71,14 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     return trace_term + logdet_term
 
 
-def ip_objective_dense(Z, X, state, alpha, model_type, key, full_set_size=None):
+def ip_objective_dense(Z, X, state, alpha, model_type, key, *, full_set_size=None, flat_params, unravel_fn):
     """
     =========================================
     Compute KL[ q(theta|Z) || p(theta|data) ]
     =========================================
     """
-    S, *_ = compute_curvature_approx_dense(state, X, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
-    S_z,    *_ = compute_curvature_approx_dense(state, Z, alpha=alpha, model_type=model_type, full_set_size=full_set_size)
+    S, *_ = compute_curvature_approx_dense(state, X, alpha=alpha, model_type=model_type, full_set_size=full_set_size, flat_params=flat_params, unravel_fn=unravel_fn)
+    S_z,    *_ = compute_curvature_approx_dense(state, Z, alpha=alpha, model_type=model_type, full_set_size=full_set_size, flat_params=flat_params, unravel_fn=unravel_fn)
     S_z_inv = jnp.linalg.inv(S_z)
     
     trace_term = jnp.linalg.trace(S @ S_z_inv)
@@ -174,8 +175,8 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         
         # Jointly optimize alpha by interleaving steps.
         # After a burnin period, every x'th step, optimize alpha for y steps.
-        alpha_steps_every = 5
-        alpha_steps_per_call = 15
+        alpha_steps_every = 2
+        alpha_steps_per_call = 10
         if (step % alpha_steps_every == 0) and step > 20:
             rng, alpha_rng = jax.random.split(rng)
             log_alpha_state, map_state = train_alpha(
@@ -213,13 +214,14 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
                 ax.set_xlabel('z[0]')
                 ax.set_ylabel('z[1]')
                 ax.set_title(f'Inducing Point Trajectory after {step} steps')
-                scatterp(*z_np.T, color="yellow", zorder=8, marker="X", label="Inducing points")
+                scatterp(*z_np.T, color="yellow", zorder=8, marker="X", s=100, label="Inducing points")
 
                 # expensive backdrop
                 plot_lla_2D_classification_single(
                     fig, ax, map_state, dataset_sample[0], dataset_sample[1].squeeze(),
-                    z_np, alpha, matrix_free=True, num_mc_samples=32, mode='ip_lla', key=rng,
-                    plot_Z=True, cbar=False,
+                    z_np, 
+                    alpha, matrix_free=True, num_mc_samples=32, mode='ip_lla', key=rng,
+                    plot_Z=False, cbar=False,
                     flat_params=flat_params_map, unravel_fn=unravel_fn_map,
                 )
                 
@@ -228,7 +230,6 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
                 fig.canvas.flush_events()
                 plt.savefig(f"fig/toy/ips.png")
                 
-                trajectory = trajectory[-3:]
-        
+                trajectory = trajectory[-5:]
     
     return Z
