@@ -109,7 +109,7 @@ def get_initial_points(
             
             return trace_term - logdet_term
         
-        X_pool, _ = get_next_sample(num_batches=2) # todo hyperparam
+        X_pool, _ = get_next_sample(num_batches=1) # todo num_batches is actually a hyperparam of how extensive the candidate search should be.
         
         best_val = -jnp.inf
         best_idx = 0

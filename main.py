@@ -248,7 +248,7 @@ def main():
         _sample = next(iter(sample_loader))
         plot_binary_classification_data(_sample[0], _sample[1].squeeze())
         
-        zinit = get_initial_points(zinit, train_loader_ip, m_ip,
+        zinit = get_initial_points(zinit, sample_loader, m_ip,
                                     state=map_state,
                                     key=rng_ip,
                                     model_type=model_type,
