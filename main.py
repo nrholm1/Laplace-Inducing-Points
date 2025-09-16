@@ -238,6 +238,7 @@ def main():
     train_loader_ip, *_ = get_dataloaders(dataset=args.dataset, batch_size=batch_size_ip)
     
     # train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_ip) # ! OLD
+    # zinit = next(iter(train_loader_init))[0]
     if args.mode in ["train_inducing", "full_pipeline"]:
         bootstrap_size = 4
         train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=bootstrap_size)
