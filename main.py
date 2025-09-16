@@ -14,6 +14,7 @@ from seaborn import set_style
 
 set_style('darkgrid')
 
+from src.init_ip import get_initial_points
 from src.scalemodels import TrainState, EMPTY_STATS
 from src.toymodels import SimpleRegressor, SimpleClassifier
 from src.toydata import get_dataloaders, load_toydata
@@ -234,14 +235,29 @@ def main():
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_ip = jax.random.PRNGKey(seed_ip)
-    # todo here: smart initialization
-    
-    train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_ip)
-    zinit = next(iter(train_loader_init))[0]
-    
-    
     train_loader_ip, *_ = get_dataloaders(dataset=args.dataset, batch_size=batch_size_ip)
-
+    
+    # train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_ip) # ! OLD
+    if args.mode in ["train_inducing", "full_pipeline"]:
+        bootstrap_size = 4
+        train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=bootstrap_size)
+        zinit = next(iter(train_loader_init))[0]
+        
+        sample_loader, *_ = get_dataloaders(dataset=args.dataset, batch_size=400)
+        _sample = next(iter(sample_loader))
+        plot_binary_classification_data(_sample[0], _sample[1].squeeze())
+        
+        zinit = get_initial_points(zinit, train_loader_ip, m_ip,
+                                    state=map_state,
+                                    key=rng_ip,
+                                    model_type=model_type,
+                                    alpha=args.alpha_ip,
+                                    full_set_size=opt_cfg['full_set_size'],
+                                    st_samples=st_samples,
+                                    slq_samples=slq_samples,
+                                    slq_num_matvecs=slq_num_matvecs,
+                                )
+    
     
     if args.mode in ["train_inducing", "full_pipeline"]:
         zoptimizer = optax.adam(lr_ip)
