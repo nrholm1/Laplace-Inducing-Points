@@ -58,12 +58,15 @@ def compute_W_vps(state, Z, model_type, *, flat_params, unravel_fn, full_set_siz
 
     def WTfun(v):
         idx = jnp.arange(M, dtype=jnp.int32)
-        per_i = jax.vmap(lambda i: _WT_i(i, v))(idx)
+        per_i = jax.lax.map(lambda i: _WT_i(i, v), idx)
         return scale * per_i
 
     def Wfun(U):
         idx = jnp.arange(M, dtype=jnp.int32)
-        per_i = jax.vmap(_W_i, in_axes=(0, 0))(idx, U)
+        def body_map(pair):
+            i, u_i = pair
+            return _W_i(i, u_i)
+        per_i = jax.lax.map(body_map, (idx, U))
         return scale * per_i.sum(axis=0)
 
     return Wfun, WTfun
