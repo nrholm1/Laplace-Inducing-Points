@@ -73,7 +73,7 @@ def get_initial_points(
         D: int,
     ):
         M = Z_const.shape[0]
-        n_next = M + 1
+        M_next = M + 1
         beta = N / M
         alpha_inv = 1.0 / alpha
         beta_inv = 1.0 / beta
@@ -131,8 +131,7 @@ def get_initial_points(
             trace_term = trace_estimator(trace_inner, key_trace)
 
             def logdet_inner(v):
-                w = ggn_ip_inv(v)
-                return v + (N / n_next) * (G_new(w) - G_bar(w))
+                return alpha * v + (N / M_next) * (G_to_n(v) + G_new(v))
 
             logdet_term = estimate_logdet_slq(
                 logdet_inner,
