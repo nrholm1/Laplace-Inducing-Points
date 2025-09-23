@@ -8,9 +8,10 @@ from matplotlib import pyplot as plt
 
 from src.data import make_iter
 from src.slq import estimate_logdet_slq
+from src.cg import pcg_fixed_step_reortho as pcg
 from src.ggn import build_WTW, compute_W_vps, compute_ggn_vp
-from src.nplot import scatterp
 from src.utils import flatten_nn_params
+from src.nplot import scatterp
 
 def get_initial_points(
         Z,
@@ -44,7 +45,7 @@ def get_initial_points(
         sample = (jnp.concatenate(sample[0], axis=0), jnp.concatenate(sample[1], axis=0))
         return sample
     
-    # scatterp(*Z.T, color="yellow", zorder=8, marker="X", s=100) # ! for debug
+    scatterp(*Z.T, color="yellow", zorder=8, marker="X", s=100) # ! for debug
     
     D = sum(x.size for x in jax.tree_util.tree_leaves(unravel_fn(flat_params)))
     if model_type == "regressor":
@@ -87,9 +88,6 @@ def get_initial_points(
             full_set_size=None,
         )
 
-        def G_bar(v):
-            return G_to_n(v) / M
-
         W, WT = compute_W_vps(
             state,
             Z_const,
@@ -103,13 +101,31 @@ def get_initial_points(
         inner = WT(x0)
         inner_shape = inner.shape
         d_z = inner.size
-        I_d = jnp.eye(d_z, dtype=jnp.float32)
-        WTW = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M, 32))
+        # I_d = jnp.eye(d_z, dtype=jnp.float32)
+        # WTW = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M, 32))
 
+        # def ggn_ip_inv(v):
+        #     u = WT(v).reshape(d_z)
+        #     x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u)#, assume_a="pos")
+        #     return alpha_inv * v - (alpha_inv**2) * W(x.reshape(inner_shape))
+        
+        _jitter = 1e-6
+        def A(x_flat):
+            x_inner = x_flat.reshape(inner_shape)
+            Wx = W(x_inner)
+            WtWx = WT(Wx).reshape(-1)
+            return beta_inv*x_flat + alpha_inv*WtWx + _jitter
+        
+        def P(v):
+            return v
+            
+        _pcg = pcg(M)
+        # _pcg = pcg(atol=1e-6, rtol=1e-2, maxiter=128, miniter=5)
+        
         def ggn_ip_inv(v):
             u = WT(v).reshape(d_z)
-            x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u, assume_a="pos")
-            return alpha_inv * v - (alpha_inv**2) * W(x.reshape(inner_shape))
+            x, aux = _pcg(A, u, P)
+            return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
 
         slq_samples = min(slq_samples, M)
 
@@ -144,7 +160,7 @@ def get_initial_points(
 
             return trace_term - logdet_term
 
-        scores = jax.vmap(score_one, in_axes=0)(X_pool)
+        scores = jax.lax.map(score_one, X_pool)
         return scores
     
     
@@ -177,8 +193,8 @@ def get_initial_points(
         Z = jnp.concatenate([Z, best_z], axis=0)
         
         print(f"Step {i+1}/{num_steps}: best score={float(best_val):.3f}")
-        # scatterp(*best_z.T, color="yellow", zorder=8, marker="X", s=100)
-        # plt.savefig(f"fig/toy/ips.png")
+        scatterp(*best_z.T, color="yellow", zorder=8, marker="X", s=100)
+        plt.savefig(f"fig/toy/ips.png")
         
     return Z
         

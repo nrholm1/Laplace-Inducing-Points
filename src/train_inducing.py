@@ -20,6 +20,7 @@ from src.toydata import plot_binary_classification_data
 from src.data import make_iter
 from src.nplot import plot_color, scatterp, plot_grayscale, plot_lla_2D_classification_single
 from src.slq import estimate_logdet_slq
+from src.cg import pcg_fixed_step_reortho as pcg
 
 
 def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
@@ -45,14 +46,33 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     dummy       = WT(x0)
     inner_shape = dummy.shape
     d_z         = dummy.size
-    I_d         = jnp.eye(d_z, dtype=jnp.float32)
-    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M,32))
+    # I_d         = jnp.eye(d_z, dtype=jnp.float32)
+    # WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M,32))
 
+    # def ggn_ip_inv(v):
+    #     # Woodbury inversion
+    #     u = WT(v).reshape(d_z)
+    #     x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u)
+    #     return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
+
+    _jitter = 1e-6
+    def A(x_flat):
+        x_inner = x_flat.reshape(inner_shape)
+        Wx = W(x_inner)
+        WtWx = WT(Wx).reshape(-1)
+        return beta_inv*x_flat + alpha_inv*WtWx + _jitter
+    
+    def P(v):
+        return v
+        
+    # _pcg = pcg(atol=1e-6, rtol=1e-2, maxiter=128, miniter=5)
+    _pcg = pcg(M)
+    
     def ggn_ip_inv(v):
-        # Woodbury inversion
         u = WT(v).reshape(d_z)
-        x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u)
+        x, aux = _pcg(A, u, P)
         return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
+        
 
     def composite_vp(v):
         return ggn_full(ggn_ip_inv(v))
@@ -195,7 +215,7 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         
         pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
         
-        if (plot_type is not None) and (step % 25 == 0):
+        if (plot_type is not None) and (step % 5 == 0):
             z_np = np.asarray(Z)
             
             if plot_type in ['mnist', 'fmnist']:
