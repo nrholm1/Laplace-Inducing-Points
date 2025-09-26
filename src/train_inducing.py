@@ -22,10 +22,21 @@ from src.nplot import plot_color, scatterp, plot_grayscale, plot_lla_2D_classifi
 from src.slq import estimate_logdet_slq
 from src.cg import pcg_fixed_step_reortho as pcg
 
+def _mask_Z(Z, mask_bool):
+    return jnp.where(mask_bool[(...,) + (None,) * (Z.ndim - 1)],
+                     Z,
+                     jax.lax.stop_gradient(Z))
+
+def _mask_from_indices(M, batch_idx, dtype=jnp.bool_):
+    mask = jnp.zeros((M,), dtype=dtype)
+    return mask.at[batch_idx].set(True)
+
 
 def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
                     st_samples=256, slq_samples=2, slq_num_matvecs=None,
                     *, flat_params, unravel_fn):
+    ip_batch_size = 8
+    
     N = full_set_size
     M = Z.shape[0]
     beta = N / M
@@ -35,43 +46,49 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     D = sum(x.size for x in jax.tree_util.tree_leaves(unravel_fn(flat_params)))
     if model_type == 'regressor': D -= 1
 
+    # Minibatch inducing points via masking and stopping gradients!
+    key, key_z = jax.random.split(key)
+    B = jax.random.choice(key_z, M, shape=(ip_batch_size,), replace=False)
+    batch_mask = _mask_from_indices(M, B)
+    Z_eff = _mask_Z(Z, batch_mask)
+
     ggn_full = compute_curvature_approx(state, X, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
                                         full_set_size=N)
-    ggn_ip   = compute_curvature_approx(state, Z, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+    ggn_ip   = compute_curvature_approx(state, Z_eff, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
                                         full_set_size=N)
-    W, WT    = compute_W_vps(state, Z, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+    W, WT    = compute_W_vps(state, Z_eff, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
                                         full_set_size=None)
 
     x0          = jnp.zeros((D,), dtype=jnp.float32)
     dummy       = WT(x0)
     inner_shape = dummy.shape
     d_z         = dummy.size
-    # I_d         = jnp.eye(d_z, dtype=jnp.float32)
-    # WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M,32))
+    I_d         = jnp.eye(d_z, dtype=jnp.float32)
+    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M,32))
 
-    # def ggn_ip_inv(v):
-    #     # Woodbury inversion
-    #     u = WT(v).reshape(d_z)
-    #     x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u)
-    #     return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
-
-    _jitter = 1e-6
-    def A(x_flat):
-        x_inner = x_flat.reshape(inner_shape)
-        Wx = W(x_inner)
-        WtWx = WT(Wx).reshape(-1)
-        return beta_inv*x_flat + alpha_inv*WtWx + _jitter
-    
-    def P(v):
-        return v
-        
-    # _pcg = pcg(atol=1e-6, rtol=1e-2, maxiter=128, miniter=5)
-    _pcg = pcg(M)
-    
     def ggn_ip_inv(v):
+        # Woodbury inversion
         u = WT(v).reshape(d_z)
-        x, aux = _pcg(A, u, P)
+        x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u)
         return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
+
+    # _jitter = 1e-6
+    # def A(x_flat):
+    #     x_inner = x_flat.reshape(inner_shape)
+    #     Wx = W(x_inner)
+    #     WtWx = WT(Wx).reshape(-1)
+    #     return beta_inv*x_flat + alpha_inv*WtWx + _jitter
+    
+    # def P(v):
+    #     return v
+        
+    # # _pcg = pcg(atol=1e-6, rtol=1e-2, maxiter=128, miniter=5)
+    # _pcg = pcg(M)
+    
+    # def ggn_ip_inv(v):
+    #     u = WT(v).reshape(d_z)
+    #     x, aux = _pcg(A, u, P)
+    #     return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
         
 
     def composite_vp(v):
@@ -180,12 +197,12 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
     pbar = tqdm(range(num_steps))
     for step in pbar:
         dataset_sample = get_next_sample(num_batches=1)
-        x_sample,y_sample = dataset_sample
+        X_sample,y_sample = dataset_sample
         
         rng = jax.random.fold_in(rng, step)
         
         Z, opt_state, loss = optimize_step(
-            Z, x_sample,
+            Z, X_sample,
             map_model_state=map_state, alpha=alpha,
             opt_state=opt_state, rng=rng, model_type=model_type, zoptimizer=zoptimizer,
             num_mc_samples=num_mc_samples, full_set_size=full_set_size, scalable=scalable,
@@ -196,7 +213,7 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         # Jointly optimize alpha by interleaving steps.
         # After a burnin period, every x'th step, optimize alpha for y steps.
         alpha_steps_every = 2
-        alpha_steps_per_call = 10
+        alpha_steps_per_call = 0
         if (step % alpha_steps_every == 0) and step > 20:
             rng, alpha_rng = jax.random.split(rng)
             log_alpha_state, map_state = train_alpha(
