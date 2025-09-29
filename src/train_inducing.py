@@ -35,7 +35,7 @@ def _mask_from_indices(M, batch_idx, dtype=jnp.bool_):
 def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
                     st_samples=256, slq_samples=2, slq_num_matvecs=None,
                     *, flat_params, unravel_fn):
-    ip_batch_size = 8
+    ip_batch_size = 16
     
     N = full_set_size
     M = Z.shape[0]
@@ -63,6 +63,7 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     dummy       = WT(x0)
     inner_shape = dummy.shape
     d_z         = dummy.size
+    
     I_d         = jnp.eye(d_z, dtype=jnp.float32)
     WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M,32))
 
@@ -100,11 +101,21 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     trace_integrand = matfree_stochtrace.integrand_trace()
     trace_sampler   = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
     trace_estimator = partial(matfree_stochtrace.estimator(trace_integrand, sampler=trace_sampler), composite_vp)
-    trace_term      = jax.checkpoint(trace_estimator)(key_trace)
+    # trace_term      = jax.lax.map(jax.checkpoint(trace_estimator), jax.random.split(key_trace, st_samples)).mean()
+    trace_term      = trace_estimator(key_trace)
 
     slq_num_matvecs = min(slq_num_matvecs, M)
-    logdet_term     = estimate_logdet_slq(ggn_ip, D=D, M=M, key=key_slq,
+    # logdet_term     = estimate_logdet_slq(ggn_ip, D=D, M=M, key=key_slq,
+    #                                       slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs)
+    def small_slq_target(u_flat): 
+        u = u_flat.reshape(inner_shape)
+        v_flat = WT(W(u)).reshape(-1)
+        return u_flat + beta/alpha*v_flat
+    res     = estimate_logdet_slq(small_slq_target, D=d_z, M=M, key=key_slq,
                                           slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs)
+    logdet_term = D*jnp.log(alpha) + res
+    
+    # pdb.set_trace()
     return trace_term + logdet_term
 
 
@@ -212,8 +223,8 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         
         # Jointly optimize alpha by interleaving steps.
         # After a burnin period, every x'th step, optimize alpha for y steps.
-        alpha_steps_every = 2
-        alpha_steps_per_call = 0
+        alpha_steps_every = 5
+        alpha_steps_per_call = 1
         if (step % alpha_steps_every == 0) and step > 20:
             rng, alpha_rng = jax.random.split(rng)
             log_alpha_state, map_state = train_alpha(
@@ -232,7 +243,7 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         
         pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
         
-        if (plot_type is not None) and (step % 5 == 0):
+        if (plot_type is not None) and (step % 100 == 0):
             z_np = np.asarray(Z)
             
             if plot_type in ['mnist', 'fmnist']:
