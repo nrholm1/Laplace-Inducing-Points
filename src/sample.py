@@ -42,16 +42,11 @@ def inv_matsqrt_vp(
 
     # dense W^T W once, stable dtype and sizable blocks
     WTW = build_WTW(W, WT, inner_shape, d, dtype=jnp.float32, block=min(64, int(Z.shape[0])))
-    WTW = 0.5 * (WTW + WTW.T)
-
-    # factor W^T W once
-    eye_d   = jnp.eye(d, dtype=WTW.dtype)
-    jitter  = 1e-6 * (jnp.mean(jnp.diag(WTW)) + 1.0)
-    L_wtw   = jnp.linalg.cholesky(WTW + jitter * eye_d)
 
     def solve_WTW(u):
-        y = jax.scipy.linalg.solve_triangular(L_wtw,   u, lower=True)
-        x = jax.scipy.linalg.solve_triangular(L_wtw.T, y, lower=False)
+        # y = jax.scipy.linalg.solve_triangular(L_wtw,   u, lower=True)
+        # x = jax.scipy.linalg.solve_triangular(L_wtw.T, y, lower=False)
+        x = jnp.linalg.solve(WTW, u)
         return x
 
     # null-projection term

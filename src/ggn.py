@@ -6,7 +6,25 @@ from functools import partial
 from src.utils import flatten_nn_params
 
 
-def compute_W_vps(state, Z, model_type, *, flat_params, unravel_fn, full_set_size=None, blockwise=False):
+def _mask_Z(Z, mask_bool):
+    return jnp.where(mask_bool[(...,) + (None,) * (Z.ndim - 1)],
+                     Z,
+                     jax.lax.stop_gradient(Z))
+
+def _mask_from_indices(M, batch_idx, dtype=jnp.bool_):
+    mask = jnp.zeros((M,), dtype=dtype)
+    return mask.at[batch_idx].set(True)
+
+
+def compute_W_vps(state, Z, model_type, *, 
+                  flat_params, unravel_fn, 
+                  full_set_size=None, blockwise=False,
+                  batch_idx=None):
+    
+    if batch_idx is not None:
+        batch_mask = _mask_from_indices(M, jnp.asarray(batch_idx, jnp.int32))
+        Z = _mask_Z(Z, batch_mask)
+    
     M = Z.shape[0]
     N = full_set_size or M
     scale = jnp.sqrt(N / M)
@@ -58,19 +76,30 @@ def compute_W_vps(state, Z, model_type, *, flat_params, unravel_fn, full_set_siz
 
     def WTfun(v):
         idx = jnp.arange(M, dtype=jnp.int32)
-        per_i = jax.vmap(lambda i: _WT_i(i, v))(idx)
+        per_i = jax.lax.map(lambda i: _WT_i(i, v), idx)
         return scale * per_i
 
     def Wfun(U):
         idx = jnp.arange(M, dtype=jnp.int32)
-        per_i = jax.vmap(_W_i, in_axes=(0, 0))(idx, U)
+        def body_map(pair):
+            i, u_i = pair
+            return _W_i(i, u_i)
+        per_i = jax.lax.map(body_map, (idx, U))
         return scale * per_i.sum(axis=0)
 
     return Wfun, WTfun
 
 
 
-def compute_ggn_vp(state, Z, model_type, *, flat_params, unravel_fn, full_set_size=None):
+def compute_ggn_vp(state, Z, model_type, *, 
+                   flat_params, unravel_fn, 
+                   full_set_size=None,
+                   batch_idx=None):
+    
+    if batch_idx is not None:
+        batch_mask = _mask_from_indices(M, jnp.asarray(batch_idx, jnp.int32))
+        Z = _mask_Z(Z, batch_mask)
+        
     M = Z.shape[0]
     N = full_set_size or M
     scale = (N / M)

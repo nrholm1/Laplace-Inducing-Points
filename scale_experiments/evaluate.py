@@ -1,13 +1,10 @@
-import pdb
 import argparse, functools, pathlib, time
 import numpy as np
 
-from sklearn.metrics import roc_auc_score          # pip install scikit-learn
+from sklearn.metrics import roc_auc_score
 
 import jax, jax.numpy as jnp
 from matplotlib import pyplot as plt
-import numpy as np
-# from flax.training.train_state import TrainState
 import optax
 from tqdm import tqdm
 
@@ -16,9 +13,10 @@ from src.scaledata   import get_dataloaders
 from src.scalemodels import EMPTY_STATS, get_model, TrainState
 from src.utils       import (load_yaml, load_checkpoint,
                              load_array_checkpoint, print_options,
-                             print_summary)
+                             print_summary, flatten_nn_params)
 from src.nplot import plot_grayscale
 from src.toydata import get_dataloaders as get_toydataloaders, load_toydata
+
 
 # Helper
 def build_state(model_cfg, lr, dummy_input):
@@ -38,40 +36,34 @@ def build_state(model_cfg, lr, dummy_input):
 
 # ----------------------  calibration / OOD utils  ---------------------
 def brier_score(probs: np.ndarray, labels: np.ndarray) -> float:
-    """Multi-class Brier score (lower is better)."""
     one_hot = np.eye(probs.shape[-1])[np.astype(labels, int)]
     return np.mean(np.sum((probs - one_hot) ** 2, axis=1))
 
 def ece(probs: np.ndarray, labels: np.ndarray, n_bins: int = 15) -> float:
-    """Expected calibration error (Naïve histogram, confidence vs. accuracy)."""
     confidences = probs.max(1)
     predictions = probs.argmax(1)
     accuracies  = (predictions == labels)
 
     bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
     ece_val   = 0.0
-    N         = len(labels)
 
     for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
         mask = (confidences >= lo) & (confidences < hi)
         if not np.any(mask):
             continue
-        bin_conf   = confidences[mask].mean()
-        bin_acc    = accuracies[mask].mean()
-        ece_val   += np.abs(bin_conf - bin_acc) * mask.mean()
+        bin_conf = confidences[mask].mean()
+        bin_acc  = accuracies[mask].mean()
+        ece_val += np.abs(bin_conf - bin_acc) * mask.mean()
     return ece_val
 
 def ood_scores(probs: np.ndarray) -> np.ndarray:
-    """Return a scalar OOD score per sample (higher ⇒ more ID-like)."""
     return -probs.max(1)
 
 
 def auroc_ood(state, id_probs: np.ndarray, ood_loader, Z,
               alpha, full_set_size, model_type, num_mc_samples, rng,
-              scalable=True):
-    # rng = jax.random.PRNGKey(1337)
+              scalable=True, *, flat_params, unravel_fn):
     ood_probs = []
-
     for xb, _ in tqdm(ood_loader, desc="OOD pass"):
         rng, sub = jax.random.split(rng)
         _, _, mean = batch_nll(state, xb, _,
@@ -82,7 +74,8 @@ def auroc_ood(state, id_probs: np.ndarray, ood_loader, Z,
                                num_mc_samples=num_mc_samples,
                                rng=sub,
                                scalable=scalable,
-                               return_mean=True)
+                               return_mean=True,
+                               flat_params=flat_params, unravel_fn=unravel_fn)
         ood_probs.append(np.asarray(mean))
     ood_probs = np.concatenate(ood_probs, axis=0)
 
@@ -94,10 +87,11 @@ def auroc_ood(state, id_probs: np.ndarray, ood_loader, Z,
 
 
 # ---------------------------  NLL utils  ------------------------------
-# @functools.partial(jax.jit, static_argnames=("model_type", "num_mc_samples", "alpha", "full_set_size", "scalable", "return_mean"))
 def batch_nll(state, x, y, Z, *, alpha, full_set_size,
-              model_type, num_mc_samples, rng, scalable=True, return_mean=False):
-    """Return (batch_nll, batch_correct)."""    
+              model_type, num_mc_samples, rng,
+              scalable=True, return_mean=False,
+              flat_params, unravel_fn):
+    """Return (batch_nll, batch_correct) or (nll, acc, mean)."""
 
     if scalable:
         logit_samples = predict_lla_scalable(
@@ -108,7 +102,8 @@ def batch_nll(state, x, y, Z, *, alpha, full_set_size,
             alpha=alpha,
             full_set_size=full_set_size,
             num_samples=num_mc_samples,
-            key=rng
+            key=rng,
+            flat_params=flat_params, unravel_fn=unravel_fn,
         )                                 # (S, B, C)
     else: 
         logit_dist = predict_lla_dense(
@@ -117,6 +112,7 @@ def batch_nll(state, x, y, Z, *, alpha, full_set_size,
             model_type=model_type,
             alpha=alpha,
             full_set_size=full_set_size,
+            flat_params=flat_params, unravel_fn=unravel_fn,
         )
         logit_samples = logit_dist.sample(seed=rng, sample_shape=(num_mc_samples,))
     # variables = {
@@ -127,27 +123,13 @@ def batch_nll(state, x, y, Z, *, alpha, full_set_size,
     
     S = logit_samples.shape[0]
     log_probs = jax.nn.log_softmax(logit_samples, axis=-1)          # (S,B,C)
-    # gather the log-probability of the *true* class
-    y_int = y.squeeze().astype(jnp.int32)                           # ensure int32
-    log_p_true = jnp.take_along_axis(
-        log_probs,
-        y_int[None, :, None],                                       # (1,B,1)  broadcasts over S
-        axis=-1
-    ).squeeze(-1)                                                  # (S,B)
-
-    # log of the MC-averaged predictive probability  log( 1/S Σ_s p_s )
-    log_avg_prob = (
-        jax.scipy.special.logsumexp(log_p_true, axis=0)             # (B,)
-        - jnp.log(S)
-    )
-
+    y_int = y.squeeze().astype(jnp.int32)
+    log_p_true = jnp.take_along_axis(log_probs, y_int[None, :, None], axis=-1).squeeze(-1)  # (S,B)
+    log_avg_prob = jax.scipy.special.logsumexp(log_p_true, axis=0) - jnp.log(S)
     nll = -jnp.mean(log_avg_prob)
 
     probs = jax.nn.softmax(logit_samples, axis=-1)      # (S,B,C)
     mean  = probs.mean(axis=0)                          # (B,C)
-
-    # one_hot_y = jax.nn.one_hot(y.squeeze(), logit_samples.shape[-1])
-    # nll = jnp.mean(optax.softmax_cross_entropy(logit_samples, one_hot_y))
     acc   = (mean.argmax(-1) == y.squeeze()).mean()
 
     if return_mean:
@@ -157,15 +139,12 @@ def batch_nll(state, x, y, Z, *, alpha, full_set_size,
 
 def eval_dataset(state, dataloader, Z, alpha,
                  full_set_size, model_type, num_mc_samples,
-                 rng,
-                 scalable=True):
+                 rng, scalable=True, *,
+                 flat_params, unravel_fn):
 
     tot_nll, tot_correct, tot_N = 0.0, 0.0, 0
-    # rng = jax.random.PRNGKey(420) # static key
-
     pbar = tqdm(dataloader)
     for x_b, y_b in pbar:
-        # pdb.set_trace()
         rng, sub = jax.random.split(rng)
         nll, acc = batch_nll(state, x_b, y_b,
                              Z,
@@ -174,13 +153,14 @@ def eval_dataset(state, dataloader, Z, alpha,
                              model_type=model_type,
                              num_mc_samples=num_mc_samples,
                              rng=sub,
-                             scalable=scalable)
+                             scalable=scalable,
+                             flat_params=flat_params, unravel_fn=unravel_fn)
 
         pbar.set_description(f"[NLL {nll:.3f}] [ACC {acc:.3f}]")
-        bs        = x_b.shape[0]
-        tot_nll  += float(nll)  * bs
+        bs          = x_b.shape[0]
+        tot_nll    += float(nll)  * bs
         tot_correct += float(acc) * bs
-        tot_N    += bs
+        tot_N      += bs
 
     return tot_nll / tot_N, tot_correct / tot_N
 
@@ -193,11 +173,11 @@ def eval_dataset_extended(state,
                           model_type, 
                           num_mc_samples,
                           rng,
-                          scalable=True):
+                          scalable=True, *,
+                          flat_params, unravel_fn):
 
     tot_nll, tot_correct, tot_N = 0.0, 0.0, 0
     all_probs, all_labels       = [], []
-    # rng = jax.random.PRNGKey(4210)
 
     pbar = tqdm(dataloader)
     for x_b, y_b in pbar:
@@ -210,12 +190,13 @@ def eval_dataset_extended(state,
                                          num_mc_samples=num_mc_samples,
                                          rng=sub,
                                          scalable=scalable,
-                                         return_mean=True)
+                                         return_mean=True,
+                                         flat_params=flat_params, unravel_fn=unravel_fn)
 
-        bs        = x_b.shape[0]
-        tot_nll  += float(nll)  * bs
+        bs          = x_b.shape[0]
+        tot_nll    += float(nll)  * bs
         tot_correct += float(acc) * bs
-        tot_N    += bs
+        tot_N      += bs
 
         all_probs.append(np.asarray(mean_probs))
         all_labels.append(np.asarray(y_b).squeeze())
@@ -225,7 +206,6 @@ def eval_dataset_extended(state,
     probs  = np.concatenate(all_probs,  axis=0)
     labels = np.concatenate(all_labels, axis=0)
 
-    # extra metrics
     bri  = brier_score(probs, labels)
     cal  = ece(probs, labels)
 
@@ -266,7 +246,7 @@ def main():
     batch_size     = map_cfg["batch_size"]
     lr_map         = map_cfg["lr"]
 
-    if args.dataset in ["spiral", "banana"]: # todo implement more toy datasets?
+    if args.dataset in ["spiral", "banana"]:
         train_loader, test_loader, _ = get_toydataloaders(args.dataset, batch_size)
         train_loader, _, _ = get_toydataloaders(args.dataset, 400)
     else:
@@ -281,7 +261,7 @@ def main():
         ood_loader = None
 
     # ---------------- model & MAP weights -------------
-    dummy_input = next(iter(train_loader))[0][:1]          # (1,28,28,1)
+    dummy_input = next(iter(train_loader))[0][:1]
     model, state = build_state(model_cfg, lr_map, dummy_input)
 
     map_ckpt_prefix = f"map_{args.dataset}"
@@ -293,6 +273,9 @@ def main():
 
     print("== Loaded MAP weights ==");  print_summary(state.params)
 
+    # hoist MAP flatten once
+    flat_params_map, unravel_fn_map = flatten_nn_params(state.params)
+
     # ---------------- inducing points -----------------
     ip_cfg   = opt_cfg["ip"]
     induc_ckpt_name = f"ind_{args.dataset}"
@@ -302,17 +285,6 @@ def main():
             name=induc_ckpt_name,
             step=epochs_inducing
         )
-    # ! plotting code
-    xtrain,ytrain = next(iter(train_loader))
-    # pdb.set_trace()
-    # from src.nplot import make_comparison_figure, plot_binary_classification_data
-    # ood_loader, _, _ = get_toydataloaders(args.ood_dataset, 256)
-    # xood,yood = next(iter(ood_loader))
-    # fig,axs=make_comparison_figure(state, xtrain, ytrain, xtrain, alpha, matrix_free=False, num_mc_samples=500)
-    # plot_binary_classification_data(xood, yood.squeeze(), axs[0])
-    # plot_binary_classification_data(xood, yood.squeeze(), axs[1])
-    # plt.savefig("fig/test.pdf", dpi=300, bbox_inches="tight")
-    
 
     iters = 10
     rng = jax.random.PRNGKey(155858)
@@ -326,21 +298,21 @@ def main():
             state,
             test_loader,
             Z,
-            # xtrain,
             rng=rng,
             alpha=alpha,
             full_set_size=full_set_size,
             model_type=model_cfg["type"],
             num_mc_samples=ip_cfg["mc_samples"],
-            scalable=args.scalable
+            scalable=args.scalable,
+            flat_params=flat_params_map, unravel_fn=unravel_fn_map,
         )
         dt = time.time() - t0
 
         print(f"\nTest NLL   : {nll:8.5f}"
-            f"\nTest Acc   : {acc*100:8.3f} %"
-            f"\nBrier      : {bri:8.5f}"
-            f"\nECE (15bin): {cal:8.5f}"
-            f"\nTime       : {dt:6.1f} s")
+              f"\nTest Acc   : {acc*100:8.3f} %"
+              f"\nBrier      : {bri:8.5f}"
+              f"\nECE (15bin): {cal:8.5f}"
+              f"\nTime       : {dt:6.1f} s")
 
         nlls.append(nll)
         accs.append(acc)
@@ -355,13 +327,13 @@ def main():
                 probs,
                 ood_loader,
                 Z,
-                # xtrain,
                 alpha=alpha,
                 rng=rng,
                 full_set_size=full_set_size,
                 model_type=model_cfg["type"],
                 num_mc_samples=ip_cfg["mc_samples"],
-                scalable=args.scalable
+                scalable=args.scalable,
+                flat_params=flat_params_map, unravel_fn=unravel_fn_map,
             )
             print(f"OOD AUROC  : {auroc*100:8.3f} %")
             aurocs.append(auroc)

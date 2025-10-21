@@ -75,8 +75,7 @@ def train_alpha(
     map_state,
     log_alpha_state,
     Z,
-    train_loader: Iterable,
-    test_loader: Optional[Iterable] = None,  # currently unused
+    get_batch_fn,
     *,
     model_type: str,
     num_steps: int,
@@ -95,10 +94,9 @@ def train_alpha(
         rng = jax.random.PRNGKey(0)
 
     flat_params, unravel_fn = flatten_nn_params(map_state.params)
-    batches = make_iter(train_loader)
 
     for _ in range(num_steps):
-        batch = next(batches)
+        batch = get_batch_fn()
         rng, subkey = jax.random.split(rng)
 
         log_alpha_state, map_state, loss = optimize_alpha_step(
