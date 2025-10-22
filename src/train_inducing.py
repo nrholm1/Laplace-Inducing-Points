@@ -21,6 +21,8 @@ from src.data import make_iter
 from src.nplot import plot_color, scatterp, plot_grayscale, plot_lla_2D_classification_single
 from src.slq import estimate_logdet_slq
 from src.cg import pcg_fixed_step_reortho as pcg
+from src.sampling2 import get_conditional_theta_sampler
+
 
 def _mask_Z(Z, mask_bool):
     return jnp.where(mask_bool[(...,) + (None,) * (Z.ndim - 1)],
@@ -35,13 +37,11 @@ def _mask_from_indices(M, batch_idx, dtype=jnp.bool_):
 def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
                     st_samples=256, slq_samples=2, slq_num_matvecs=None,
                     *, flat_params, unravel_fn):
-    ip_batch_size = 16
     
     N = full_set_size
     M = Z.shape[0]
     beta = N / M
-    alpha_inv = 1.0 / alpha
-    beta_inv = 1.0 / beta
+    ip_batch_size = M // 4 # ! HARDCODED BATCH SIZE
 
     D = sum(x.size for x in jax.tree_util.tree_leaves(unravel_fn(flat_params)))
     if model_type == 'regressor': D -= 1
@@ -52,70 +52,42 @@ def ip_objective_mf(Z, X, state, alpha, model_type, key, full_set_size=None,
     batch_mask = _mask_from_indices(M, B)
     Z_eff = _mask_Z(Z, batch_mask)
 
-    ggn_full = compute_curvature_approx(state, X, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+    ggn_real = compute_curvature_approx(state, 
+                                        X, 
+                                        alpha=alpha, 
+                                        model_type=model_type, 
+                                        flat_params=flat_params, 
+                                        unravel_fn=unravel_fn,
                                         full_set_size=N)
-    ggn_ip   = compute_curvature_approx(state, Z_eff, alpha=alpha, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
-                                        full_set_size=N)
-    W, WT    = compute_W_vps(state, Z_eff, model_type=model_type, flat_params=flat_params, unravel_fn=unravel_fn,
+    Wz, WzT             = compute_W_vps(state, 
+                                        Z_eff, 
+                                        model_type=model_type, 
+                                        flat_params=flat_params, 
+                                        unravel_fn=unravel_fn,
                                         full_set_size=None)
 
     x0          = jnp.zeros((D,), dtype=jnp.float32)
-    dummy       = WT(x0)
+    dummy       = WzT(x0)
     inner_shape = dummy.shape
     d_z         = dummy.size
     
-    I_d         = jnp.eye(d_z, dtype=jnp.float32)
-    WTW         = build_WTW(W, WT, inner_shape, d_z, dtype=jnp.float32, block=min(M,32))
+    key, key_trace = jax.random.split(key)
+    theta_sampler = get_conditional_theta_sampler(Z_eff, alpha, beta, state, atol=1e-4, btol=1e-4, ctol=1e-5)
+    integrand = matfree_stochtrace.integrand_trace()
+    sampler = lambda __key: theta_sampler(__key, num_samples=st_samples)
+    estimate = matfree_stochtrace.estimator(integrand, sampler)
+    trace_term = estimate(lambda v: ggn_real(v), key_trace)
 
-    def ggn_ip_inv(v):
-        # Woodbury inversion
-        u = WT(v).reshape(d_z)
-        x = jax.scipy.linalg.solve(beta_inv * I_d + alpha_inv * WTW, u)
-        return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
-
-    # _jitter = 1e-6
-    # def A(x_flat):
-    #     x_inner = x_flat.reshape(inner_shape)
-    #     Wx = W(x_inner)
-    #     WtWx = WT(Wx).reshape(-1)
-    #     return beta_inv*x_flat + alpha_inv*WtWx + _jitter
-    
-    # def P(v):
-    #     return v
-        
-    # # _pcg = pcg(atol=1e-6, rtol=1e-2, maxiter=128, miniter=5)
-    # _pcg = pcg(M)
-    
-    # def ggn_ip_inv(v):
-    #     u = WT(v).reshape(d_z)
-    #     x, aux = _pcg(A, u, P)
-    #     return alpha_inv * v - alpha_inv**2 * W(x.reshape(inner_shape))
-        
-
-    def composite_vp(v):
-        return ggn_full(ggn_ip_inv(v))
-
-    key_trace, key_slq = jax.random.split(key, 2)
-    x0 = jnp.zeros((D,), dtype=jnp.float32)
-
-    trace_integrand = matfree_stochtrace.integrand_trace()
-    trace_sampler   = matfree_stochtrace.sampler_rademacher(x0, num=st_samples)
-    trace_estimator = partial(matfree_stochtrace.estimator(trace_integrand, sampler=trace_sampler), composite_vp)
-    # trace_term      = jax.lax.map(jax.checkpoint(trace_estimator), jax.random.split(key_trace, st_samples)).mean()
-    trace_term      = trace_estimator(key_trace)
-
+    key, key_slq = jax.random.split(key)
     slq_num_matvecs = min(slq_num_matvecs, M)
-    # logdet_term     = estimate_logdet_slq(ggn_ip, D=D, M=M, key=key_slq,
-    #                                       slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs)
     def small_slq_target(u_flat): 
         u = u_flat.reshape(inner_shape)
-        v_flat = WT(W(u)).reshape(-1)
+        v_flat = WzT(Wz(u)).reshape(-1)
         return u_flat + beta/alpha*v_flat
     res     = estimate_logdet_slq(small_slq_target, D=d_z, M=M, key=key_slq,
                                           slq_samples=slq_samples, slq_num_matvecs=slq_num_matvecs)
     logdet_term = D*jnp.log(alpha) + res
     
-    # pdb.set_trace()
     return trace_term + logdet_term
 
 
@@ -163,6 +135,7 @@ def optimize_step(Z, X, map_model_state, alpha, opt_state, rng, zoptimizer, num_
         )
     updates, new_opt_state = zoptimizer.update(grads, opt_state, Z)
     new_params = optax.apply_updates(Z, updates)
+    # pdb.set_trace()
     return new_params, new_opt_state, loss
 
 
@@ -243,7 +216,7 @@ def train_inducing_points(map_state, zinit, zoptimizer, dataloader, model_type, 
         
         pbar.set_description_str(f"⍺: {alpha:.3e} |  Loss: {loss:.3f}", refresh=True)
         
-        if (plot_type is not None) and (step % 100 == 0):
+        if (plot_type is not None) and (step % 10 == 0):
             z_np = np.asarray(Z)
             
             if plot_type in ['mnist', 'fmnist']:

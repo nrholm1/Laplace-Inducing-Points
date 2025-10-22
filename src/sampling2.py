@@ -1,8 +1,24 @@
+import pdb
 import jax
 import jax.numpy as jnp
+from jax.flatten_util import ravel_pytree
 from functools import partial
 
 from matfree.lstsq import lsmr
+
+from src.utils import count_model_params, flatten_nn_params
+
+
+def get_f_apply(map_state, unravel_fn, model_type):
+    def f_apply(flatp, x):
+        p = unravel_fn(flatp)
+        if model_type == "regressor":
+            return map_state.apply_fn(p, x, return_logvar=False)
+        else:
+            variables = {"params": p, "batch_stats": map_state.batch_stats}
+            return map_state.apply_fn(variables, x, train=False, mutable=False)
+    return f_apply
+
 
 
 def H(p):
@@ -25,13 +41,16 @@ def Hsqrtsym(p, tol=1e-6):
 def Hinvsqrt(p, tol=1e-6):
     _H = H(p)
     E,V = jnp.linalg.eigh(_H)
-    S = jnp.where(E > tol, 1.0/jnp.sqrt(E), 0.0)
+    E_safe = jnp.maximum(E, tol)
+    S = jnp.where(E > tol, 1.0/jnp.sqrt(E_safe), 0.0)
     return (V*S) @ V.T
 
 
 
 
-def get_lsmr_system(data, _alpha_inv_sqrt, v, *, beta_sqrt):
+def get_lsmr_system(data, _alpha_inv_sqrt, v, map_state, *, beta_sqrt, model_type='classifier'):
+    flat_params,unravel_fn = flatten_nn_params(map_state.params)
+    f_apply = get_f_apply(map_state, unravel_fn, model_type)
     f_out, vj_fun = jax.vjp(lambda _p: f_apply(_p, data), flat_params)
     p1 = jax.nn.softmax(f_out, axis=1)
     B = beta_sqrt * jax.vmap(Hsqrt)(p1)
@@ -54,32 +73,34 @@ def get_lsmr_system(data, _alpha_inv_sqrt, v, *, beta_sqrt):
 
 
 
-def get_K(_data, _alpha, _beta, *, atol=1e-3, btol=1e-3, ctol=1e-4):
+def get_K(_data, _alpha, _beta, map_state, *, atol=1e-3, btol=1e-3, ctol=1e-4):
     solve = lsmr(atol=atol, btol=btol, ctol=ctol)
     _alpha_inv_sqrt = jnp.sqrt(1.0 / _alpha)
     _beta_sqrt = jnp.sqrt(_beta)
     
     @jax.jit
     def K(v):
-        vecmat, u1 = get_lsmr_system(_data, _alpha_inv_sqrt, v, beta_sqrt=_beta_sqrt)
+        vecmat, u1 = get_lsmr_system(_data, _alpha_inv_sqrt, v, map_state, beta_sqrt=_beta_sqrt)
         xi, info = solve(vecmat, u1, damp=1.0)
         return _alpha_inv_sqrt * xi
     
     return K
 
 
-def sample_theta(key, alpha, *, num_samples=1):
+def sample_theta(key, alpha, D, *, num_samples=1):
     alpha_inv_sqrt = jnp.sqrt(1.0 / alpha)
     return alpha_inv_sqrt * jax.random.normal(key, (num_samples, D))
 
 
-def sample_logits_given_theta(key, theta0, real_data, *, beta):
+def sample_logits_given_theta(key, theta0, real_data, map_state, *, beta, model_type='classifier'):
     num_samples = theta0.shape[0]
+    flat_params,unravel_fn = flatten_nn_params(map_state.params)
+    f_apply = get_f_apply(map_state, unravel_fn, model_type)
     
     def linearized_fun(_t0):
         # Returns f(θ), Jθ_0
         _f_out,_jv = jax.jvp(
-            lambda _p: f_apply(_p, real_data), (flat_params,), (_t0,)# - flat_params,)
+            lambda _p: f_apply(_p, real_data), (flat_params,), (_t0,)
         )
         return _f_out, _jv
     
@@ -95,14 +116,15 @@ def sample_logits_given_theta(key, theta0, real_data, *, beta):
     return bmm1 + jv
 
 
-def get_conditional_theta_sampler(data, alpha, beta, *, atol=1e-3, btol=1e-3, ctol=1e-4):
-    _K = get_K(data, alpha, beta, atol=atol, btol=btol, ctol=ctol)
+def get_conditional_theta_sampler(data, alpha, beta, map_state, *, atol=1e-3, btol=1e-3, ctol=1e-4):
+    _K = get_K(data, alpha, beta, map_state, atol=atol, btol=btol, ctol=ctol)
+    D = count_model_params(map_state.params)
     
     @partial(jax.jit, static_argnames=("num_samples",))
     def sample_theta_given_data(key, *, num_samples=1):
         key_theta, key_data = jax.random.split(key, 2)
-        theta0 = sample_theta(key_theta, alpha, num_samples=num_samples)
-        y0 = sample_logits_given_theta(key_data, theta0, data, beta=beta)
+        theta0 = sample_theta(key_theta, alpha, D, num_samples=num_samples)
+        y0 = sample_logits_given_theta(key_data, theta0, data, map_state, beta=beta)
         # f_map = f_apply(flat_params, data)
         # residuals = f_map[None,...] - y0
         residuals = - y0
@@ -194,24 +216,9 @@ if __name__ == '__main__':
     beta      = full_set_size / IP_DATA.shape[0]
     beta_sqrt = jnp.sqrt(beta)
 
-    from jax.flatten_util import ravel_pytree
-
-    flat_params, unravel_fn = ravel_pytree(map_state.params)
-
-    def get_f_apply(map_state, model_type):
-        def f_apply(flatp, x):
-            p = unravel_fn(flatp)
-            if model_type == "regressor":
-                return map_state.apply_fn(p, x, return_logvar=False)
-            else:
-                variables = {"params": p, "batch_stats": map_state.batch_stats}
-                return map_state.apply_fn(variables, x, train=False, mutable=False)
-        return f_apply
-
-    f_apply = get_f_apply(map_state, model_type)
     
     
-    theta_sampler = get_conditional_theta_sampler(IP_DATA, alpha, beta, atol=1e-4, btol=1e-4, ctol=1e-5)
+    theta_sampler = get_conditional_theta_sampler(IP_DATA, alpha, beta, map_state, atol=1e-4, btol=1e-4, ctol=1e-5)
     
     
 
