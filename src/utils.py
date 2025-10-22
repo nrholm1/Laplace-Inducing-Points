@@ -93,3 +93,11 @@ def print_options(args):
     print('# Options')
     for key, value in sorted(vars(args).items()):
         print(key, '=', value)
+        
+def print_dict(d, indent=0):
+    for key, value in d.items():
+        if isinstance(value, dict):
+            print('  ' * indent + str(key) + ': ')
+            print_dict(value, indent+1)
+        else:
+            print('  ' * indent + str(key) + ': ' + str(value))
