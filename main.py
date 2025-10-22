@@ -10,9 +10,9 @@ from flax.training import train_state
 import optax
 
 import matplotlib.pyplot as plt
-from seaborn import set_style
+# from seaborn import set_style
 
-set_style('darkgrid')
+# set_style('darkgrid')
 
 from src.init_ip import get_initial_points
 from src.scalemodels import TrainState, EMPTY_STATS
@@ -237,31 +237,43 @@ def main():
     rng_ip = jax.random.PRNGKey(seed_ip)
     train_loader_ip, *_ = get_dataloaders(dataset=args.dataset, batch_size=batch_size_ip)
     
-    # train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_ip) # ! OLD
-    # zinit = next(iter(train_loader_init))[0]
-    if args.mode in ["train_inducing", "full_pipeline"]:
-        bootstrap_size = 4
-        train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=bootstrap_size)
-        zinit = next(iter(train_loader_init))[0]
+    train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_ip) # ! OLD
+    zinit = next(iter(train_loader_init))[0]
+    # if args.mode in ["train_inducing", "full_pipeline"]:
+    #     bootstrap_size = 10
+    #     train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=bootstrap_size)
+    #     zinit = next(iter(train_loader_init))[0]
         
-        sample_loader, *_ = get_dataloaders(dataset=args.dataset, batch_size=400)
-        _sample = next(iter(sample_loader))
-        plot_binary_classification_data(_sample[0], _sample[1].squeeze())
+    #     sample_loader, *_ = get_dataloaders(dataset=args.dataset, batch_size=batch_size_ip)
+    #     _sample = next(iter(sample_loader))
+    #     plot_binary_classification_data(_sample[0], _sample[1].squeeze())
         
-        zinit = get_initial_points(zinit, sample_loader, m_ip,
-                                    state=map_state,
-                                    key=rng_ip,
-                                    model_type=model_type,
-                                    alpha=args.alpha_ip,
-                                    full_set_size=opt_cfg['full_set_size'],
-                                    st_samples=st_samples,
-                                    slq_samples=slq_samples,
-                                    slq_num_matvecs=slq_num_matvecs,
-                                )
+    #     zinit = get_initial_points(zinit, sample_loader, m_ip,
+    #                                 state=map_state,
+    #                                 key=rng_ip,
+    #                                 model_type=model_type,
+    #                                 alpha=args.alpha_ip,
+    #                                 full_set_size=opt_cfg['full_set_size'],
+    #                                 st_samples=st_samples,
+    #                                 slq_samples=slq_samples,
+    #                                 slq_num_matvecs=slq_num_matvecs,
+    #                             )
     
     
     if args.mode in ["train_inducing", "full_pipeline"]:
-        zoptimizer = optax.adam(lr_ip)
+        total_steps = epochs_ip
+        warmup_steps = int(0.1 * total_steps)   # 10% warmup
+
+        schedule = optax.warmup_cosine_decay_schedule(
+            init_value=0.0,                 # start from 0
+            peak_value=lr_ip,               # your base LR
+            warmup_steps=warmup_steps,
+            decay_steps=total_steps - warmup_steps,
+            end_value=lr_ip * 0.1           # finish at 10% of base LR
+        )
+
+        zoptimizer = optax.adam(learning_rate=schedule)
+        # zoptimizer = optax.adam(learning_rate=lr_ip)
         
         z_ip = train_inducing_points(
             map_state, 
