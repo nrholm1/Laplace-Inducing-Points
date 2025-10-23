@@ -1,147 +1,106 @@
+from __future__ import annotations
+
 import argparse
 import os
-import pdb
 
 import jax
-import jax.numpy as jnp
-import matplotlib as mpl
-import numpy as np
-from flax.training import train_state
+import matplotlib.pyplot as plt
 import optax
 
-import matplotlib.pyplot as plt
-# from seaborn import set_style
-
-# set_style('darkgrid')
-
-from src.init_ip import get_initial_points
 from src.scalemodels import TrainState, EMPTY_STATS
 from src.toymodels import SimpleRegressor, SimpleClassifier
 from src.toydata import get_dataloaders, load_toydata
-from src.nplot import make_comparison_figure, make_predictive_mean_figure, make_predictive_mean_figure2, plot_binary_classification_data, plot_map_2D_classification, scatterp, linep, plot_cinterval, plot_inducing_points_1D, plot_lla_2D_classification
-
+from src.nplot import (
+    plot_lla_2D_classification,
+)
 from src.train_map import train_map
-from src.train_inducing import train_inducing_points
-from src.lla import predict_lla_dense, predict_lla_scalable
-from src.grid_search import grid_search_alpha
-from src.utils import flatten_nn_params, load_yaml, save_checkpoint, load_checkpoint, save_array_checkpoint, load_array_checkpoint, print_summary, print_options
-    
-# jax.config.update("jax_enable_x64", True)
-
-
-def plot_map(map_model_state, traindata, testdata, alpha, model_type="", dataset_name=""):
-    # ? visualize MAP estimator
-    fig, ax = plt.subplots(figsize=(8,5))
-    plt.title(f"MAP estimator")
-    
-    xtrain, ytrain = traindata
-    xtest, ytest = testdata
-    
-    if model_type == "regressor":
-        xlin = jnp.linspace(xtrain.min(), xtrain.max(), 100, dtype=jnp.float64)[:, None]
-        postpreddist_full = predict_lla_dense(
-            map_model_state, xlin, xtrain, model_type="regressor", alpha=alpha
-        )
-        plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
-                        text="full", color='orange', zorder=5)
-        scatterp(xtest, ytest, color="yellow", zorder=2, label='Test data')
-        scatterp(xtrain, ytrain, zorder=1, label='Train data')
-        
-    elif model_type == "classifier":
-        from src.toydata import plot_binary_classification_data
-        plot_binary_classification_data(xtrain, ytrain)
-        tmin, tmax = xtrain.min() - 1.5, xtrain.max() + 1.5
-        plot_map_2D_classification(fig, ax, map_model_state, tmin, tmax)
-        # plot_bc_boundary_contour( map_model_state, tmin, tmax, color='#3f3', alpha=1., label='Decision boundary')
-        
-    plt.legend(loc='lower right', framealpha=1.0)
-    plt.tight_layout()
-    os.makedirs("fig", exist_ok=True)
-    model_type = f"{model_type}_" if model_type is not None else ""
-    dataset_name = f"{dataset_name}_" if dataset_name is not None else ""
-    plt.savefig(f"fig/{dataset_name}{model_type}map.pdf")
-
-
-def plot_inducing_dense(model_type, map_model_state, 
-                  Xtrain, 
-                  ytrain, 
-                  Xtest, 
-                  ytest, 
-                  zinduc, 
-                  alpha, rng_inducing,
-                  model, optimizer_map, 
-                  m_induc, epochs_induc, dataset_name,
-                  full_lla=False):
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-    if full_lla:
-        fig.suptitle(f"Full LLA / {Xtrain.shape[0]} data points")
-    else:
-        fig.suptitle(f"IP LLA / {m_induc} inducing points, {epochs_induc} steps")
-    
-
-    if model_type == "regressor":  # 1D regression case
-        # Create a linear grid for predictions
-        xlin = jnp.linspace(Xtrain.min(), Xtrain.max(), 100, dtype=jnp.float64)[:, None]
-        postpreddist_full = predict_lla_dense(
-            map_model_state, xlin, Xtrain, model_type=model_type, alpha=alpha
-        )
-        postpreddist_optimized = predict_lla_dense(
-            map_model_state, xlin, zinduc, model_type=model_type, alpha=alpha,
-            full_set_size=Xtrain.shape[0]
-        )
-        
-        plot_cinterval(xlin.squeeze(), postpreddist_full.mean(), postpreddist_full.stddev(), 
-                       text="full", color='orange', zorder=5)
-        plot_cinterval(xlin.squeeze(), postpreddist_optimized.mean(), postpreddist_optimized.stddev(), 
-                       text="ind. optimized", color='limegreen', zorder=4)
-        
-        # Plot training and test data
-        scatterp(Xtest, ytest, color="yellow", zorder=2, label='Test data')
-        scatterp(Xtrain, ytrain, zorder=1, label='Train data')
-        plot_inducing_points_1D(ax, Z, color='limegreen', offsetp=0.00, zorder=3)#, label=None)
-
-        
-    plt.tight_layout()
-    os.makedirs("fig", exist_ok=True)
-    plt.savefig(f"fig/{dataset_name}_{model_type}_lla.pdf")
-
+from src.train_inducing import IPConfig, train_inducing_points
+from src.utils import (
+    flatten_nn_params,
+    load_yaml,
+    save_checkpoint,
+    load_checkpoint,
+    save_array_checkpoint,
+    load_array_checkpoint,
+    print_summary,
+    print_options,
+)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", type=str, default="full_pipeline",
-                        choices=["train_map", "train_inducing", "visualize", "full_pipeline"],
-                        help="Which phase(s) to run.")
-    parser.add_argument("--full", action="store_true",
-                        help="If selected, compute full LLA.")
-    parser.add_argument("--scalable", action="store_true",
-                        help="Whether to use scalable (matrix free) IP optimization and LLA sampling.")
-    parser.add_argument("--num_mc_samples_lla", type=int, default=1000,
-                        help="Number of MC samples for LLA predictive dist.")
-    parser.add_argument("--alpha_ip", type=float, default=None,
-                        help="IP alpha to use - default is to grid search for it.")
-    parser.add_argument("--plot_Z", action="store_true",
-                        help="Whether to plot inducing points.")
-    parser.add_argument("--plot_X", action="store_true",
-                        help="Whether to plot training points.")
-    parser.add_argument("--dataset", type=str, required=True,
-                        help="Path to an .npz file containing x,y arrays.")
-    parser.add_argument("--model_config", type=str, required=True,
-                        help="Path to a YAML file with model hyperparams (e.g. config/toyregressor.yml).")
-    parser.add_argument("--optimization_config", type=str, required=True,
-                        help="Path to a YAML file with all optimization hyperparams (for MAP and inducing).")
-    parser.add_argument("--ckpt_map", type=str, default="checkpoint/map/",
-                        help="Directory for loading/saving the MAP model checkpoint.")
-    parser.add_argument("--ckpt_induc", type=str, default="checkpoint/ind/",
-                        help="Directory for loading/saving the inducing points checkpoint.")
+    parser.add_argument(
+        "mode",
+        type=str,
+        default="full_pipeline",
+        choices=["train_map", "train_inducing", "visualize", "full_pipeline"],
+        help="Which phase(s) to run.",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="If selected, compute full LLA.",
+    )
+    parser.add_argument(
+        "--scalable",
+        action="store_true",
+        help="Use matrix-free scalable IP optimization and LLA sampling.",
+    )
+    parser.add_argument(
+        "--num_mc_samples_lla",
+        type=int,
+        default=1000,
+        help="Number of MC samples for LLA predictive dist.",
+    )
+    parser.add_argument(
+        "--alpha_ip",
+        type=float,
+        default=None,
+        help="Alpha for inducing-point objective. If omitted, falls back to config['optimization']['alpha'].",
+    )
+    parser.add_argument(
+        "--plot_Z", action="store_true", help="Whether to plot inducing points."
+    )
+    parser.add_argument(
+        "--plot_X", action="store_true", help="Whether to plot training points."
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        required=True,
+        help="Path to an .npz file containing x,y arrays.",
+    )
+    parser.add_argument(
+        "--model_config",
+        type=str,
+        required=True,
+        help="Path to a YAML with model hyperparams (e.g. config/toyregressor.yml).",
+    )
+    parser.add_argument(
+        "--optimization_config",
+        type=str,
+        required=True,
+        help="Path to a YAML with all optimization hyperparams (for MAP and inducing).",
+    )
+    parser.add_argument(
+        "--ckpt_map",
+        type=str,
+        default="checkpoint/map/",
+        help="Directory for loading/saving the MAP model checkpoint.",
+    )
+    parser.add_argument(
+        "--ckpt_induc",
+        type=str,
+        default="checkpoint/ind/",
+        help="Directory for loading/saving the inducing points checkpoint.",
+    )
     args = parser.parse_args()
 
-    # Print selected options
     print_options(args)
-    
+
     # Load model config
     cfg = load_yaml(args.model_config)
-    model_cfg = cfg['model']
+    model_cfg = cfg["model"]
     model_type = model_cfg.get("name", "regressor")  # 'regressor' or 'classifier'
     num_h = model_cfg["num_h"]
     num_l = model_cfg["num_l"]
@@ -153,28 +112,35 @@ def main():
         model = SimpleRegressor(numh=num_h, numl=num_l)
     elif model_type == "classifier":
         model = SimpleClassifier(numh=num_h, numl=num_l, numc=num_c)
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
 
-    # Load optimization config (combined for MAP and inducing)
-    opt_cfg = cfg['optimization']
-    alpha = opt_cfg["alpha"]
+    # Load optimization config
+    opt_cfg = cfg["optimization"]
+    alpha_default = opt_cfg["alpha"]
+    alpha_ip = args.alpha_ip if args.alpha_ip is not None else alpha_default
+
     map_cfg = opt_cfg["map"]
-    
     full_set_size = opt_cfg["full_set_size"]
 
     map_batch_size = map_cfg["batch_size"]
     epochs_map = map_cfg["epochs"]
     lr_map = map_cfg["lr"]
     seed_map = map_cfg["seed"]
-    
-    # Load data
-    train_loader, test_loader, _ = get_dataloaders(dataset=args.dataset, batch_size=map_batch_size)
-    
+
+    # Data
+    train_loader, test_loader, _ = get_dataloaders(
+        dataset=args.dataset, batch_size=map_batch_size
+    )
+
+    # Initialize model params
     dummy_input = next(iter(train_loader))[0][:1]
     variables = model.init(rng_model, dummy_input)
 
     print("== Model Summary ==")
     print_summary(variables)
 
+    # IP hyperparams
     ip_cfg = opt_cfg["ip"]
     m_ip = ip_cfg["m"]
     epochs_ip = ip_cfg["epochs"]
@@ -182,17 +148,18 @@ def main():
     lr_ip = ip_cfg["lr"]
     mc_samples = ip_cfg["mc_samples"]
     seed_ip = ip_cfg["seed"]
-    st_samples      = ip_cfg.get("st_samples", 256)
-    slq_samples     = ip_cfg.get("slq_samples", 4)
+    st_samples = ip_cfg.get("st_samples", 256)
+    slq_samples = ip_cfg.get("slq_samples", 4)
     slq_num_matvecs = ip_cfg.get("slq_num_matvecs", 32)
+    ip_batch_frac = ip_cfg.get("ip_batch_frac", 0.25)
 
-    # Build train_state for MAP
+    # Build TrainState for MAP
     optimizer_map = optax.adam(lr_map)
     model_state = TrainState.create(
         apply_fn=model.apply,
-        params=variables['params'],
+        params=variables["params"],
         tx=optimizer_map,
-        batch_stats = variables.get('batch_stats', EMPTY_STATS),
+        batch_stats=variables.get("batch_stats", EMPTY_STATS),
     )
     map_ckpt_prefix = f"map_{args.dataset}"
 
@@ -203,126 +170,101 @@ def main():
             train_loader,
             test_loader,
             model_type=model_type,
-            alpha=alpha,
-            num_epochs=epochs_map
+            alpha=alpha_default,
+            num_epochs=epochs_map,
         )
-        
+
         save_checkpoint(
             train_state=map_state,
             ckpt_dir=args.ckpt_map,
             prefix=map_ckpt_prefix,
-            step=epochs_map
+            step=epochs_map,
         )
-        
-        train_data,test_data,_ = load_toydata(args.dataset) # get train/test data for plots
-        plot_map(map_state, 
-                 train_data,
-                 test_data, 
-                 alpha, 
-                 model_type=model_type, 
-                 dataset_name=args.dataset)
-        
+
         print("[DONE] MAP training.")
         if args.mode == "train_map":
             return
     else:
         map_state = load_checkpoint(
-            ckpt_dir=args.ckpt_map,
-            prefix=map_ckpt_prefix,
-            target=model_state
+            ckpt_dir=args.ckpt_map, prefix=map_ckpt_prefix, target=model_state
         )
 
     # =========== PART B: Inducing Points ===========
     induc_ckpt_name = f"ind_{args.dataset}"
     rng_ip = jax.random.PRNGKey(seed_ip)
-    train_loader_ip, *_ = get_dataloaders(dataset=args.dataset, batch_size=batch_size_ip)
-    
-    train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=m_ip) # ! OLD
+
+    # Loader for IP training
+    train_loader_ip, *_ = get_dataloaders(
+        dataset=args.dataset, batch_size=batch_size_ip
+    )
+
+    # Bootstrap initial inducing locations: take a full batch of size m_ip
+    train_loader_init, _, _ = get_dataloaders(dataset=args.dataset, batch_size=m_ip)
     zinit = next(iter(train_loader_init))[0]
-    # if args.mode in ["train_inducing", "full_pipeline"]:
-    #     bootstrap_size = 10
-    #     train_loader_init,_,val_loader = get_dataloaders(dataset=args.dataset, batch_size=bootstrap_size)
-    #     zinit = next(iter(train_loader_init))[0]
-        
-    #     sample_loader, *_ = get_dataloaders(dataset=args.dataset, batch_size=batch_size_ip)
-    #     _sample = next(iter(sample_loader))
-    #     plot_binary_classification_data(_sample[0], _sample[1].squeeze())
-        
-    #     zinit = get_initial_points(zinit, sample_loader, m_ip,
-    #                                 state=map_state,
-    #                                 key=rng_ip,
-    #                                 model_type=model_type,
-    #                                 alpha=args.alpha_ip,
-    #                                 full_set_size=opt_cfg['full_set_size'],
-    #                                 st_samples=st_samples,
-    #                                 slq_samples=slq_samples,
-    #                                 slq_num_matvecs=slq_num_matvecs,
-    #                             )
-    
-    
+
+    # Learning-rate schedule with warmup + cosine decay
     if args.mode in ["train_inducing", "full_pipeline"]:
         total_steps = epochs_ip
-        warmup_steps = int(0.1 * total_steps)   # 10% warmup
+        warmup_steps = int(0.1 * total_steps)  # 10% warmup
 
         schedule = optax.warmup_cosine_decay_schedule(
-            init_value=0.0,                 # start from 0
-            peak_value=lr_ip,               # your base LR
+            init_value=0.0,
+            peak_value=lr_ip,
             warmup_steps=warmup_steps,
-            decay_steps=total_steps - warmup_steps,
-            end_value=lr_ip * 0.1           # finish at 10% of base LR
+            decay_steps=max(1, total_steps - warmup_steps),
+            end_value=lr_ip * 0.1,
         )
-
         zoptimizer = optax.adam(learning_rate=schedule)
-        # zoptimizer = optax.adam(learning_rate=lr_ip)
-        
-        z_ip = train_inducing_points(
-            map_state, 
-            zinit, 
-            zoptimizer,
-            dataloader=train_loader_ip,
-            rng=rng_ip,
-            model_type=model_type,
-            num_mc_samples=mc_samples,
-            alpha=args.alpha_ip,
-            num_steps=epochs_ip,
-            full_set_size=opt_cfg['full_set_size'],
-            scalable=args.scalable,
-            plot_type=args.dataset,
+
+        # NEW: smaller, cleaner config for IP training (matches refactor)
+        cfg_ip = IPConfig(
             st_samples=st_samples,
             slq_samples=slq_samples,
             slq_num_matvecs=slq_num_matvecs,
+            ip_batch_frac=ip_batch_frac,
+            scalable=args.scalable,
+            model_type=model_type,
         )
 
-        # Save the inducing points (zinduc)
+        z_ip = train_inducing_points(
+            map_state=map_state,
+            Z_init=zinit,
+            optimizer=zoptimizer,
+            data_loader=train_loader_ip,
+            rng=rng_ip,
+            alpha=alpha_ip,
+            full_set_size=full_set_size,
+            cfg=cfg_ip,
+            num_steps=epochs_ip,
+        )
+
         save_array_checkpoint(
             array=z_ip,
             ckpt_dir=args.ckpt_induc,
             name=induc_ckpt_name,
-            step=epochs_ip
+            step=epochs_ip,
         )
-    
+
         print("[DONE] Inducing training.")
     else:
-        # Load both the inducing points (zinduc)
         z_ip = load_array_checkpoint(
-            ckpt_dir=args.ckpt_induc,
-            name=induc_ckpt_name,
-            step=epochs_ip
+            ckpt_dir=args.ckpt_induc, name=induc_ckpt_name, step=epochs_ip
         )
 
     # =========== PART C: Visualization ===========
     if args.mode in ["visualize", "full_pipeline"]:
         os.makedirs("fig", exist_ok=True)
-        
+
         flat_params_map, unravel_fn_map = flatten_nn_params(map_state.params)
-        
+
         fig, ax = plt.subplots(1, 2, figsize=(13, 5))
         full_lla = args.full
         if full_lla:
-            plt.title(f"Full LLA / {opt_cfg['full_set_size']} data points")
+            fig.suptitle(f"Full LLA / {opt_cfg['full_set_size']} data points")
         else:
-            plt.title(f"IP LLA / {m_ip} inducing points, {epochs_ip} steps")
-        (xtrain,ytrain),*_ = load_toydata(args.dataset)
+            fig.suptitle(f"IP LLA / {m_ip} inducing points, {epochs_ip} steps")
+
+        (xtrain, ytrain), *_ = load_toydata(args.dataset)
         plot_lla_2D_classification(
             fig,
             ax,
@@ -330,28 +272,22 @@ def main():
             xtrain,
             ytrain,
             z_ip,
-            args.alpha_ip,
+            alpha_ip,
             key=jax.random.fold_in(jax.random.PRNGKey(seed_ip), 1),
-            mode="full_lla" if args.full else "ip_lla",
+            mode="full_lla" if full_lla else "ip_lla",
             matrix_free=args.scalable,
             num_mc_samples=args.num_mc_samples_lla,
-            # plot_Z=args.plot_Z,
-            plot_Z=not full_lla,
+            plot_Z=not full_lla if args.plot_Z or True else False,  # default: show Z for IP
             plot_X=args.plot_X,
-            flat_params=flat_params_map, 
+            flat_params=flat_params_map,
             unravel_fn=unravel_fn_map,
         )
         plt.tight_layout()
-        suffix_if_matrixfree = '_mf' if args.scalable else ''
-        plt.savefig(f"fig/{args.dataset}_{model_type}_lla_{'full' if args.full else 'ip'}{suffix_if_matrixfree}.pdf")
-        
-        # ! LA vs LLA example plot!
-        # make_predictive_mean_figure(map_model_state, xtrain, ytrain, alpha, num_mc_samples=args.num_mc_samples_lla)
-        # plt.savefig(f"fig/la_vs_lla.pdf", dpi=300, bbox_inches="tight")
-        # make_predictive_mean_figure2(map_model_state, xtrain, ytrain, alpha, num_mc_samples=args.num_mc_samples_lla)
-        # plt.savefig(f"fig/banana.pdf", dpi=300, bbox_inches="tight")
-        
-        
+        suffix_if_matrixfree = "_mf" if args.scalable else ""
+        plt.savefig(
+            f"fig/{args.dataset}_{model_type}_lla_{'full' if full_lla else 'ip'}{suffix_if_matrixfree}.pdf"
+        )
+
         print("[DONE] Visualization complete.")
 
 
