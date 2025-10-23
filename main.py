@@ -36,7 +36,7 @@ from src.scaledata import get_dataloaders as get_scale_dataloaders
 
 
 def _build_model_and_vars(variant: str, model_cfg: dict, dummy_input):
-    if variant not in ["toy-dense", "toy-mf"]:
+    if variant in ["toy-dense", "toy-mf"]:
         model_type = model_cfg.get("name", "regressor")
         num_h = model_cfg["num_h"]
         num_l = model_cfg["num_l"]
@@ -61,7 +61,7 @@ def _build_model_and_vars(variant: str, model_cfg: dict, dummy_input):
 
 
 def _get_dataloaders(variant: str, dataset: str, batch_size: int, *, aug=None, num_workers=None):
-    if variant not in ["toy-dense", "toy-mf"]:
+    if variant in ["toy-dense", "toy-mf"]:
         # toy dataloaders: (train, test, val)
         return get_toy_dataloaders(dataset=dataset, batch_size=batch_size)
     else:
@@ -170,7 +170,7 @@ def main():
     
 
     # Loaders for MAP
-    if variant not in ["toy-dense", "toy-mf"]:
+    if variant in ["toy-dense", "toy-mf"]:
         train_loader, test_loader, val_loader = _get_dataloaders("toy", args.dataset, map_batch_size)
         dummy_input = next(iter(train_loader))[0][:1]
     else:
@@ -239,7 +239,7 @@ def main():
 
     # ======== B) Inducing points ========
     # Init Z from a batch of size m_ip; for scale we ensure aug=False to sample real data points
-    if variant not in ["toy-dense", "toy-mf"]:
+    if variant in ["toy-dense", "toy-mf"]:
         train_loader_init, _, _ = _get_dataloaders("toy", args.dataset, m_ip)
         zinit = next(iter(train_loader_init))[0]
         train_loader_ip, *_ = _get_dataloaders("toy", args.dataset, batch_size_ip)
