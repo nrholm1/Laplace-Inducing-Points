@@ -3,26 +3,25 @@ from __future__ import annotations
 import argparse
 import math
 import os
-import pdb
 
 import jax
+import jax.numpy as jnp
 import optax
 import matplotlib.pyplot as plt
 
 from src.scalemodels import EMPTY_STATS, TrainState, get_model as get_scale_model
 from src.train_map import train_map
+from src.grid_search import grid_search_alpha
 from src.train_inducing import IPConfig, train_inducing_points
 from src.utils import (
     flatten_nn_params,
     load_yaml,
-    print_dict,
     save_checkpoint,
     load_checkpoint,
     save_array_checkpoint,
     load_array_checkpoint,
     print_summary,
     print_options,
-    ip_config_from_dict
 )
 
 # Toy stack
@@ -34,9 +33,17 @@ from src.nplot import plot_lla_2D_classification
 from src.scaledata import get_dataloaders as get_scale_dataloaders
 
 
+def _detect_variant(model_cfg: dict[str, object]) -> str:
+    # Heuristic: toy configs use "name" (regressor/classifier); scale uses "type".
+    if "type" in model_cfg:
+        return "scale"
+    if "name" in model_cfg:
+        return "toy"
+    raise ValueError("Cannot detect variant from model config; expected key 'type' or 'name'.")
+
 
 def _build_model_and_vars(variant: str, model_cfg: dict, dummy_input):
-    if variant not in ["toy-dense", "toy-mf"]:
+    if variant == "toy":
         model_type = model_cfg.get("name", "regressor")
         num_h = model_cfg["num_h"]
         num_l = model_cfg["num_l"]
@@ -61,14 +68,16 @@ def _build_model_and_vars(variant: str, model_cfg: dict, dummy_input):
 
 
 def _get_dataloaders(variant: str, dataset: str, batch_size: int, *, aug=None, num_workers=None):
-    if variant not in ["toy-dense", "toy-mf"]:
+    if variant == "toy":
         # toy dataloaders: (train, test, val)
         return get_toy_dataloaders(dataset=dataset, batch_size=batch_size)
     else:
-        # scale dataloaders: allow aug/workers args
+        # scale dataloaders: allow aug/workers args (default kept compatible)
         if num_workers is None:
             num_workers = 0
         if aug is None:
+            # default differs depending on call site; leave None → library default
+            # but our calls below set aug explicitly where needed.
             aug = True
         return get_scale_dataloaders(dataset, batch_size, num_workers=num_workers, aug=aug)
 
@@ -85,8 +94,9 @@ def main():
     parser.add_argument(
         "--variant",
         type=str,
-        choices=["toy-dense", "toy-mf", "scale"],
-        help="Pipeline variant.",
+        default="auto",
+        choices=["auto", "toy", "scale"],
+        help="Pipeline variant. If 'auto', inferred from model config ('name'→toy, 'type'→scale).",
     )
     parser.add_argument(
         "--dataset", type=str, required=True, help="Dataset name or path (.npz for toy)."
@@ -101,7 +111,7 @@ def main():
         "--alpha_ip",
         type=float,
         default=None,
-        help="IP alpha override.",
+        help="IP alpha override. For scale, if omitted, uses grid search on val.",
     )
     parser.add_argument(
         "--ckpt_map",
@@ -137,13 +147,11 @@ def main():
 
     # Load config (unified)
     cfg = load_yaml(args.config)
-    print_dict(cfg)
     model_cfg = cfg["model"]
     opt_cfg = cfg["optimization"]
 
-    # Variant
-    variant = args.variant
-    model_type = model_cfg["type"]
+    # Detect variant
+    variant = _detect_variant(model_cfg) if args.variant == "auto" else args.variant
 
     # Common options
     alpha_default = opt_cfg["alpha"]
@@ -156,21 +164,20 @@ def main():
     lr_map = map_cfg["lr"]
 
     # IP config
-    ip_cfg_raw = opt_cfg["ip"]
-    m_ip = ip_cfg_raw["m"]
-    epochs_ip = ip_cfg_raw["epochs"]
-    batch_size_ip = ip_cfg_raw["batch_size"]
-    lr_ip = ip_cfg_raw["lr"]
-    seed_ip = ip_cfg_raw["seed"]
-    ip_cfg_pytree = ip_config_from_dict(
-        ip_cfg_raw,
-        model_type=model_type,
-        scalable=variant != "toy-dense",
-    )
-    
+    ip_cfg = opt_cfg["ip"]
+    m_ip = ip_cfg["m"]
+    epochs_ip = ip_cfg["epochs"]
+    batch_size_ip = ip_cfg["batch_size"]
+    lr_ip = ip_cfg["lr"]
+
+    seed_ip = ip_cfg["seed"]
+    st_samples = ip_cfg.get("st_samples", 256)
+    slq_samples = ip_cfg.get("slq_samples", 4)
+    slq_num_matvecs = ip_cfg.get("slq_num_matvecs", 32)
+    ip_batch_frac = ip_cfg.get("ip_batch_frac", 0.25)
 
     # Loaders for MAP
-    if variant not in ["toy-dense", "toy-mf"]:
+    if variant == "toy":
         train_loader, test_loader, val_loader = _get_dataloaders("toy", args.dataset, map_batch_size)
         dummy_input = next(iter(train_loader))[0][:1]
     else:
@@ -178,14 +185,13 @@ def main():
             "scale", args.dataset, map_batch_size, num_workers=0
         )
         dummy_input = next(iter(train_loader))[0][:1]  # e.g., (1, 28, 28, 1)
-    is_matrix_free = args.variant != "toy-dense"
 
     # Build model + variables
     model, variables, model_type = _build_model_and_vars(variant, model_cfg, dummy_input)
 
     # Optimizer for MAP
     if variant == "scale":
-        # Cosine decay for MAP
+        # Mimic large main: cosine decay for MAP
         steps_per_epoch = max(1, math.ceil(full_set_size / map_batch_size))
         total_steps = epochs_map * steps_per_epoch
         lr_schedule = optax.cosine_decay_schedule(
@@ -195,7 +201,7 @@ def main():
         )
         optimizer_map = optax.adam(learning_rate=lr_schedule)
     else:
-        # Constant LR for MAP
+        # Mimic small main: constant LR for MAP
         optimizer_map = optax.adam(lr_map)
 
     model_state = TrainState.create(
@@ -210,7 +216,7 @@ def main():
     print_summary(variables)
 
     # ======== A) MAP training ========
-    if args.mode in ["train_map", "full_pipeline"]:
+    if args.mode in ["train_map", "full_pipeline", "visualize"]:
         map_state = train_map(
             model_state,
             train_loader,
@@ -239,7 +245,7 @@ def main():
 
     # ======== B) Inducing points ========
     # Init Z from a batch of size m_ip; for scale we ensure aug=False to sample real data points
-    if variant not in ["toy-dense", "toy-mf"]:
+    if variant == "toy":
         train_loader_init, _, _ = _get_dataloaders("toy", args.dataset, m_ip)
         zinit = next(iter(train_loader_init))[0]
         train_loader_ip, *_ = _get_dataloaders("toy", args.dataset, batch_size_ip)
@@ -254,23 +260,52 @@ def main():
     if args.alpha_ip is not None:
         alpha_ip = args.alpha_ip
     else:
-        alpha_ip = alpha_default
+        if variant == "scale":
+            # Mimic large main: grid-search if not provided
+            alpha_ip = grid_search_alpha(
+                map_state,
+                zinit,
+                val_loader,
+                full_set_size=full_set_size,
+                model_type=model_type,
+                num_mc_samples=ip_cfg.get("mc_samples", 1000),
+                scalable=True,
+                log10_min=1,
+                log10_max=3,
+                n_coarse=16,
+            )
+        else:
+            # Mimic small main: fall back to global alpha
+            alpha_ip = alpha_default
 
-    total_steps_ip = epochs_ip
-    warmup_steps = int(0.1 * total_steps_ip)
-    schedule = optax.warmup_cosine_decay_schedule(
-        init_value=0.0,
-        peak_value=lr_ip,
-        warmup_steps=warmup_steps,
-        decay_steps=max(1, total_steps_ip - warmup_steps),
-        end_value=lr_ip * 0.1,
+    # z-optimizer: small uses warmup+cosine; large uses constant
+    if variant == "toy":
+        total_steps_ip = epochs_ip
+        warmup_steps = int(0.1 * total_steps_ip)
+        schedule = optax.warmup_cosine_decay_schedule(
+            init_value=0.0,
+            peak_value=lr_ip,
+            warmup_steps=warmup_steps,
+            decay_steps=max(1, total_steps_ip - warmup_steps),
+            end_value=lr_ip * 0.1,
+        )
+        zoptimizer = optax.adam(learning_rate=schedule)
+    else:
+        zoptimizer = optax.adam(lr_ip)
+
+    # IP config (common)
+    cfg_ip = IPConfig(
+        st_samples=st_samples,
+        slq_samples=slq_samples,
+        slq_num_matvecs=slq_num_matvecs,
+        ip_batch_frac=ip_batch_frac,
+        scalable=True,          # both pipelines used matrix-free in your scripts
+        model_type=model_type,
     )
-    zoptimizer = optax.adam(learning_rate=schedule)
 
-
-    if args.mode in ["train_inducing", "full_pipeline"]:
+    if args.mode in ["train_inducing", "full_pipeline", "visualize"]:
         rng_ip = jax.random.PRNGKey(seed_ip)
-        z_ip, alpha_ip, map_state = train_inducing_points(
+        z_ip = train_inducing_points(
             map_state=map_state,
             Z_init=zinit,
             optimizer=zoptimizer,
@@ -278,7 +313,7 @@ def main():
             rng=rng_ip,
             alpha=alpha_ip,
             full_set_size=full_set_size,
-            ip_cfg=ip_cfg_pytree,
+            ip_cfg=cfg_ip,
             num_steps=epochs_ip,
         )
 
@@ -297,7 +332,7 @@ def main():
 
     # ======== C) Visualization (toy only) ========
     if args.mode == "visualize":
-        if variant not in ["toy-dense", "toy-mf"]:
+        if variant != "toy":
             print("[WARN] Visualization is only implemented for the toy pipeline; skipping.")
             return
 
@@ -320,8 +355,8 @@ def main():
             alpha_ip,
             key=jax.random.fold_in(jax.random.PRNGKey(seed_ip), 1),
             mode="full_lla" if full_lla else "ip_lla",
-            matrix_free=args.variant != "toy-dense",
-            num_mc_samples=ip_cfg_raw.get("mc_samples", 1000),
+            matrix_free=True,
+            num_mc_samples=ip_cfg.get("mc_samples", 1000),
             plot_Z=args.plot_Z or (not full_lla),
             plot_X=args.plot_X,
             flat_params=flat_params_map,
@@ -329,12 +364,10 @@ def main():
         )
         plt.tight_layout()
         suffix_if_matrixfree = "_mf"
-        filename = f"fig/{args.dataset}_{model_type}_lla_{'full' if full_lla else 'ip'}{suffix_if_matrixfree if is_matrix_free else ""}.pdf"
         plt.savefig(
-            filename
+            f"fig/{args.dataset}_{model_type}_lla_{'full' if full_lla else 'ip'}{suffix_if_matrixfree}.pdf"
         )
         print("[DONE] Visualization complete.")
-        print(f"Saved to {filename}")
 
 
 if __name__ == "__main__":

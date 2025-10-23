@@ -16,7 +16,7 @@ from src.scalemodels import TrainState
 from src.train_alpha import train_alpha
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx
 from src.ggn import compute_W_vps
-from src.utils import flatten_nn_params
+from src.utils import flatten_nn_params, IPConfig
 from src.slq import estimate_logdet_slq
 from src.sampling2 import get_conditional_theta_sampler
 
@@ -34,22 +34,6 @@ def _mask_from_indices(M, batch_idx, dtype=jnp.bool_):
     return mask.at[batch_idx].set(True)
 
 
-# Configuration & shapes
-@dataclass
-class IPConfig:
-    # algo knobs
-    st_samples: int = 256
-    slq_samples: int = 2
-    slq_num_matvecs: int | None = None
-    ip_batch_frac: float = 0.25  # fraction of inducing points per substep
-    scalable: bool = True        # matrix-free vs dense
-    model_type: str = "regressor"
-
-    # optional joint alpha tuning
-    alpha_steps_every: int = 5
-    alpha_steps_burnin: int = 20
-    alpha_steps_per_call: int = 1
-
 @dataclass
 class Shapes:
     D: int  # flattened parameter dimension
@@ -61,18 +45,19 @@ def _objective_mf(
     state,
     alpha: float,
     *,
-    cfg: IPConfig,
+    ip_cfg: IPConfig,
     shapes: Shapes,
     flat_params,
     unravel_fn,
-    key_trace,
-    key_slq,
-    key_z,
+    key,
     full_set_size: int,
 ):
     """
     Scalable objective using stochastic trace + SLQ.
     """
+    
+    key_trace,key_slq,key_z = jax.random.split(key, 3)
+    
     if full_set_size is None:
         raise ValueError("full_set_size must be provided for matrix-free objective.")
     N = full_set_size
@@ -80,7 +65,7 @@ def _objective_mf(
     beta = N / M
 
     # Minibatch subset of inducing points
-    ip_batch_size = max(1, int(M * cfg.ip_batch_frac))
+    ip_batch_size = max(1, int(M * ip_cfg.ip_batch_frac))
     B = jax.random.permutation(key_z, M)[:ip_batch_size]
     batch_mask = _mask_from_indices(M, B)
     Z_eff = _mask_Z(Z, batch_mask)
@@ -90,7 +75,7 @@ def _objective_mf(
         state,
         X,
         alpha=alpha,
-        model_type=cfg.model_type,
+        model_type=ip_cfg.model_type,
         flat_params=flat_params,
         unravel_fn=unravel_fn,
         full_set_size=N,
@@ -100,7 +85,7 @@ def _objective_mf(
     Wz, WzT = compute_W_vps(
         state,
         Z_eff,
-        model_type=cfg.model_type,
+        model_type=ip_cfg.model_type,
         flat_params=flat_params,
         unravel_fn=unravel_fn,
         full_set_size=None,
@@ -117,12 +102,12 @@ def _objective_mf(
         Z_eff, alpha, beta, state, atol=1e-4, btol=1e-4, ctol=1e-5
     )
     integrand = matfree_stochtrace.integrand_trace()
-    sampler = lambda __key: theta_sampler(__key, num_samples=cfg.st_samples)
+    sampler = lambda __key: theta_sampler(__key, num_samples=ip_cfg.st_samples)
     estimate = matfree_stochtrace.estimator(integrand, sampler)
     trace_term = estimate(lambda v: ggn_real(v), key_trace)
 
     # SLQ on I + (beta/alpha) W^T W
-    slq_num_matvecs = M if cfg.slq_num_matvecs is None else min(cfg.slq_num_matvecs, M)
+    slq_num_matvecs = M if ip_cfg.slq_num_matvecs is None else min(ip_cfg.slq_num_matvecs, M)
 
     def small_slq_target(u_flat):
         u = u_flat.reshape(inner_shape)
@@ -134,7 +119,7 @@ def _objective_mf(
         D=d_z,
         M=M,
         key=key_slq,
-        slq_samples=cfg.slq_samples,
+        slq_samples=ip_cfg.slq_samples,
         slq_num_matvecs=slq_num_matvecs,
     )
     logdet_term = D * jnp.log(alpha) + res
@@ -147,7 +132,7 @@ def _objective_dense(
     state,
     alpha: float,
     *,
-    cfg: IPConfig,
+    ip_cfg: IPConfig,
     shapes: Shapes,
     flat_params,
     unravel_fn,
@@ -160,7 +145,7 @@ def _objective_dense(
         state,
         X,
         alpha=alpha,
-        model_type=cfg.model_type,
+        model_type=ip_cfg.model_type,
         full_set_size=full_set_size,
         flat_params=flat_params,
         unravel_fn=unravel_fn,
@@ -169,7 +154,7 @@ def _objective_dense(
         state,
         Z,
         alpha=alpha,
-        model_type=cfg.model_type,
+        model_type=ip_cfg.model_type,
         full_set_size=full_set_size,
         flat_params=flat_params,
         unravel_fn=unravel_fn,
@@ -194,7 +179,7 @@ def _prepare_shapes(unravel_fn, flat_params, model_type: str) -> Shapes:
 
 def _make_optimize_step(
     *,
-    cfg: IPConfig,
+    ip_cfg: IPConfig,
     shapes: Shapes,
     unravel_fn,
     flat_params,
@@ -202,20 +187,17 @@ def _make_optimize_step(
     full_set_size: int,
 ):
     def loss_fn(Z, X, state, alpha, key):
-        if cfg.scalable:
-            key, key_z, key_trace, key_slq = jax.random.split(key, 4)
+        if ip_cfg.scalable:
             return _objective_mf(
                 Z,
                 X,
                 state,
                 alpha,
-                cfg=cfg,
+                ip_cfg=ip_cfg,
                 shapes=shapes,
                 flat_params=flat_params,
                 unravel_fn=unravel_fn,
-                key_trace=key_trace,
-                key_slq=key_slq,
-                key_z=key_z,
+                key=key,
                 full_set_size=full_set_size,
             )
         else:
@@ -224,7 +206,7 @@ def _make_optimize_step(
                 X,
                 state,
                 alpha,
-                cfg=cfg,
+                ip_cfg=ip_cfg,
                 shapes=shapes,
                 flat_params=flat_params,
                 unravel_fn=unravel_fn,
@@ -250,36 +232,23 @@ def train_inducing_points(
     rng: jax.random.KeyArray,
     alpha: float,
     full_set_size: int,
-    cfg: IPConfig,
+    ip_cfg: IPConfig,
     num_steps: int,
-) -> jnp.ndarray:
+) -> Tuple[jnp.ndarray, float, TrainState]:
     """
-    Trains inducing points Z using either scalable (matrix-free) or dense objective.
-
-    Args:
-        map_state: trained MAP TrainState.
-        Z_init: initial inducing points, shape (M, d, ...).
-        optimizer: optax optimizer for Z.
-        data_loader: iterable producing (X, y) batches; only X is used here.
-        rng: PRNGKey.
-        alpha: initial alpha for the objective; may be updated internally.
-        full_set_size: size of full dataset (needed for scalable objective).
-        cfg: IPConfig with algorithmic settings.
-        num_steps: number of optimization steps.
-
-    Returns:
-        Final inducing points Z (same shape as Z_init).
+    Trains inducing points Z using either scalable (matrix-free) or dense objective,
+    with optional interleaved alpha tuning.
     """
     Z = Z_init
     opt_state = optimizer.init(Z)
 
     # Prepare parameter flattening & shapes once
     flat_params_map, unravel_fn_map = flatten_nn_params(map_state.params)
-    shapes = _prepare_shapes(unravel_fn_map, flat_params_map, model_type=cfg.model_type)
+    shapes = _prepare_shapes(unravel_fn_map, flat_params_map, model_type=ip_cfg.model_type)
 
     # Build jitted step with closures
     step = _make_optimize_step(
-        cfg=cfg,
+        ip_cfg=ip_cfg,
         shapes=shapes,
         unravel_fn=unravel_fn_map,
         flat_params=flat_params_map,
@@ -287,7 +256,7 @@ def train_inducing_points(
         full_set_size=full_set_size,
     )
 
-    # Optional alpha TrainState (for interleaved alpha tuning)
+    # Alpha state for interleaved tuning
     alpha_tx = optax.adam(learning_rate=1e-2)
     log_alpha_state = TrainState.create(
         apply_fn=lambda p: p,
@@ -295,9 +264,8 @@ def train_inducing_points(
         tx=alpha_tx,
     )
 
-    # A simple cycling iterator over the data loader
+    # Dataloader cycling
     _iter = iter(data_loader)
-
     def next_X():
         nonlocal _iter
         try:
@@ -305,32 +273,30 @@ def train_inducing_points(
         except StopIteration:
             _iter = iter(data_loader)
             batch = next(_iter)
-        X = batch[0]
-        return X
+        return batch[0]
 
     pbar = tqdm(range(num_steps))
     for t in pbar:
         X_batch = next_X()
-        step_key = jax.random.fold_in(rng, t)  # outside jit: derive per-step key
+        step_key = jax.random.fold_in(rng, t)
         Z, opt_state, loss = step(Z, X_batch, map_state, alpha, opt_state, step_key)
 
-        # Interleaved alpha updates (optional)
-        if (t % cfg.alpha_steps_every == 0) and (t > cfg.alpha_steps_burnin):
+        # Interleaved alpha updates
+        if (t % ip_cfg.alpha_steps_every == 0) and (t > ip_cfg.alpha_steps_burnin):
+            if ip_cfg.alpha_steps_per_call > 5:
+                pbar.set_description_str(f"Training ⍺ for {ip_cfg.alpha_steps_per_call} steps. Last ⍺={alpha:.3e} | Last Loss: {float(loss):.3f}", refresh=True)
             _, alpha_rng = jax.random.split(step_key)
             log_alpha_state, map_state = train_alpha(
                 map_state=map_state,
                 log_alpha_state=log_alpha_state,
                 Z=Z,
                 get_batch_fn=lambda: next_X(),
-                model_type=cfg.model_type,
-                num_steps=cfg.alpha_steps_per_call,
+                ip_cfg=ip_cfg,
                 rng=alpha_rng,
-                slq_samples=cfg.slq_samples,
-                slq_num_matvecs=cfg.slq_num_matvecs,
                 full_set_size=full_set_size,
             )
             alpha = jnp.exp(log_alpha_state.params["log_alpha"]).item()
 
         pbar.set_description_str(f"⍺: {alpha:.3e} | Loss: {float(loss):.3f}", refresh=True)
 
-    return Z
+    return Z, float(alpha), map_state

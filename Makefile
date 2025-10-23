@@ -1,143 +1,156 @@
+.SHELLFLAGS := -eu -o pipefail -c
+SHELL       := bash
 
-.PHONY: requirements dev_requirements clean data build_documentation serve_documentation
+.PHONY: help venv requirements clean \
+        run run-toy-dense run-toy-mf run-scale \
+        train_map train_inducing visualize visualize_full \
+        train_map_scale train_inducing_scale \
+        debug_run debug_map debug_inducing debug_visualize \
+        data all-data
 
-#################################################################################
-# GLOBALS                                                                       #
-#################################################################################
+# Globals / paths
+PROJECT_NAME   ?= laplace_inducing_points
+PYTHON         ?= python
+MAIN           ?= main.py
 
-PROJECT_NAME = laplace_inducing_points
-PYTHON_VERSION = 3.13
-PYTHON_INTERPRETER = python
+# Default knobs
+MODE           ?= full_pipeline      # train_map | train_inducing | visualize | full_pipeline
+EXTRA          ?=                    # extra CLI args appended at the end
 
-#################################################################################
-# COMMANDS                                                                      #
-#################################################################################
+# Toy presets (small scale)
+TOY_DATASET   ?= banana
+TOY_MODEL     ?= toyclassifier
+CONFIG_TOY    := config/toy/$(TOY_MODEL)_$(TOY_DATASET).yml
 
-## Set up python interpreter environment
-create_venv:
-	$(PYTHON_INTERPRETER) -m venv venv
+# Scale presets (large scale)
+SCALE_DATASET ?= cifar10
+SCALE_MODEL   ?= resnet1
+CONFIG_SCALE  := config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml
 
-## Install Python Dependencies
-requirements:
-	$(PYTHON_INTERPRETER) -m pip install -U pip setuptools wheel
-	$(PYTHON_INTERPRETER) -m pip install -r requirements.txt
-	$(PYTHON_INTERPRETER) -m pip install -e .
-
-## Delete all compiled Python files
-clean:
-	find . -type f -name "*.py[co]" -delete
-	find . -type d -name "__pycache__" -delete
-
-
-#################################################################################
-# PROJECT RULES                                                                 #
-#################################################################################
-
-main = main.py
-scaletrain = scale_experiments/train.py
-eval = scale_experiments/evaluate.py
-datamain = src/toydata.py
-
-DEVICE = cpu
-
-DATASET = banana
-MODEL = toyclassifier
-SCALE_DATASET = cifar10
-SCALE_MODEL = resnet1
-
-
+# Runners
 run:
-	$(PYTHON_INTERPRETER) $(main) $(mode) \
-		--dataset $(DATASET) \
-		--model_config config/toy/$(MODEL)_$(DATASET).yml \
-		--optimization_config config/toy/optimization_$(MODEL)_$(DATASET).yml \
-		$(EXTRA_ARGS)
+	@if [ -z "$(VARIANT)" ]; then echo "ERROR: VARIANT is required (toy-dense | toy-mf | scale)"; exit 1; fi
+	@if [ -z "$(DATASET)" ]; then echo "ERROR: DATASET is required"; exit 1; fi
+	@if [ -z "$(CONFIG)" ]; then echo "ERROR: CONFIG is required"; exit 1; fi
+	$(PYTHON) $(MAIN) $(MODE) \
+		--variant "$(VARIANT)" \
+		--dataset "$(DATASET)" \
+		--config "$(CONFIG)" \
+		$(EXTRA)
 
-debug_run:
-	nohup $(PYTHON_INTERPRETER) -m debugpy --listen 5678 --wait-for-client $(main) $(mode) \
-		--dataset $(DATASET) \
-		--model_config config/toy/$(MODEL)_$(DATASET).yml \
-		--optimization_config config/toy/optimization_$(MODEL)_$(DATASET).yml > debug.log 2>&1 &
-	sleep 1
-	@echo "debugpy ready"
+# Convenience wrappers that auto-select CONFIG/DATASET/VARIANT
+run-toy-dense:
+	@$(MAKE) run VARIANT=toy-dense DATASET="$(TOY_DATASET)" CONFIG="$(CONFIG_TOY)" MODE="$(MODE)" EXTRA='$(EXTRA)'
 
-train_scale:
-	$(PYTHON_INTERPRETER) $(scaletrain) $(mode) \
-		--dataset $(SCALE_DATASET) \
-		--config config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml \
-		$(EXTRA_ARGS)
-eval_scale:
-	$(PYTHON_INTERPRETER) $(eval) $(mode) \
-		--dataset $(SCALE_DATASET) \
-		--config config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml \
-		--scalable $(EXTRA_ARGS)
-eval:
-	$(PYTHON_INTERPRETER) $(eval) $(mode) \
-		--dataset $(DATASET) \
-		--config config/toy/$(MODEL)_$(DATASET).yml \
-		$(EXTRA_ARGS)
-seval:
-	$(PYTHON_INTERPRETER) $(eval) $(mode) \
-		--dataset $(DATASET) \
-		--config config/toy/$(MODEL)_$(DATASET).yml \
-		--scalable $(EXTRA_ARGS)
+run-toy-mf:
+	@$(MAKE) run VARIANT=toy-mf DATASET="$(TOY_DATASET)" CONFIG="$(CONFIG_TOY)" MODE="$(MODE)" EXTRA='$(EXTRA)'
 
-# run targets
+run-scale:
+	@$(MAKE) run VARIANT=scale DATASET="$(SCALE_DATASET)" CONFIG="$(CONFIG_SCALE)" MODE="$(MODE)" EXTRA='$(EXTRA)'
+
+# Toy shortcuts
 train_map:
-	$(MAKE) run mode=train_map
+	@$(MAKE) run-toy-dense MODE=train_map
+
 train_inducing:
-	$(MAKE) run mode=train_inducing EXTRA_ARGS="--alpha_ip 2.5e-03"
+	@$(MAKE) run-toy-dense MODE=train_inducing EXTRA='--alpha_ip 1 $(EXTRA)'
+
+# matrix-free toy (uses toy-mf variant)
 strain_inducing:
-	$(MAKE) run mode=train_inducing EXTRA_ARGS="--scalable --alpha_ip 2.5e-03"
-full_pipeline:
-	$(MAKE) run mode=full_pipeline
-sfull_pipeline:
-	$(MAKE) run mode=full_pipeline EXTRA_ARGS=--scalable
+	@$(MAKE) run-toy-mf MODE=train_inducing EXTRA='--alpha_ip 1 $(EXTRA)'
+
 visualize:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--alpha_ip 6e-03"
+	@$(MAKE) run-toy-dense MODE=visualize EXTRA='--alpha_ip 1 $(EXTRA)'
+
 visualize_full:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--full --alpha_ip 1e-03"
+	@$(MAKE) run-toy-dense MODE=visualize EXTRA='--full --alpha_ip 1 $(EXTRA)'
+
+# matrix-free visualize with MC samples (env var mcs or default 1024)
 svisualize:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--scalable --num_mc_samples_lla $(mcs) --alpha_ip 2.5e-03"
-svisualize_full:
-	$(MAKE) run mode=visualize EXTRA_ARGS="--full --scalable --num_mc_samples_lla $(mcs)"
+	@$(MAKE) run-toy-mf MODE=visualize EXTRA='--alpha_ip 1 $(EXTRA)'
 
 
-# XOR: (32, 2.5e-03), (16, 1.2e-02), (8, 8e-02)
-# Banana: (32, 2.5e-03), (16, 1.2e-02), (8, 8e-02)
-
+# Scale shortcuts
 train_map_scale:
-	$(MAKE) train_scale mode=train_map
-train_ip_scale:
-	$(MAKE) train_scale mode=train_inducing 
-#EXTRA_ARGS="--alpha_ip 10000"
+	@$(MAKE) run-scale MODE=train_map
+
+train_inducing_scale:
+	@$(MAKE) run-scale MODE=train_inducing
 
 
-# debug targets
+# Debug (debugpy)
+debug_run:
+	@if [ -z "$(VARIANT)" ]; then echo "ERROR: VARIANT is required (toy-dense | toy-mf | scale)"; exit 1; fi
+	@if [ -z "$(DATASET)" ]; then echo "ERROR: DATASET is required"; exit 1; fi
+	@if [ -z "$(CONFIG)" ]; then echo "ERROR: CONFIG is required"; exit 1; fi
+	nohup $(PYTHON) -m debugpy --listen 5678 --wait-for-client $(MAIN) $(MODE) \
+		--variant $(VARIANT) \
+		--dataset $(DATASET) \
+		--config $(CONFIG) \
+		$(EXTRA) > debug.log 2>&1 & \
+	sleep 1 ; echo "debugpy ready (port 5678)"
+
 debug_map:
-	$(MAKE) debug_run mode=train_map
+	@$(MAKE) debug_run VARIANT=toy-dense DATASET=$(TOY_DATASET) CONFIG=$(CONFIG_TOY) MODE=train_map
+
 debug_inducing:
-	$(MAKE) debug_run mode=train_inducing
+	@$(MAKE) debug_run VARIANT=toy-mf DATASET=$(TOY_DATASET) CONFIG=$(CONFIG_TOY) MODE=train_inducing EXTRA='--alpha_ip 1 $(EXTRA)'
+
 debug_visualize:
-	$(MAKE) debug_run mode=visualize
+	@$(MAKE) debug_run VARIANT=toy-mf DATASET=$(TOY_DATASET) CONFIG=$(CONFIG_TOY) MODE=visualize
+
+
+
+
+# Toy data generation helpers
+DATA_MAIN ?= src/toydata.py
+D         ?= spiral
+N         ?= 1000
+EPS       ?= 0.08
+SEED      ?= 1234
+ARGS      ?=
 
 data:
-	$(PYTHON_INTERPRETER) $(datamain) --dataset $(D) --n_samples $(N) --noise $(EPS) --seed $(SEED) $(ARGS)
+	$(PYTHON) $(DATA_MAIN) --dataset $(D) --n_samples $(N) --noise $(EPS) --seed $(SEED) $(ARGS)
 
+# Presets
+N1=300  ; EPS1=0.7    ; SEED1=1526  ; ARGS1=--split_in_middle
+N2=1280 ; EPS2=0.25   ; SEED2=6251  ; ARGS2=
+N3=500  ; EPS3=0.090  ; SEED3=584848; ARGS3=
 
-N1 = 300
-N2 = 1280
-N3 = 500
-EPS1 = 0.7
-EPS2 = 0.25
-EPS3 = 0.090
-SEED1 = 1526
-SEED2 = 6251
-SEED3 = 584848
-ARGS1="--split_in_middle"
 all-data:
-	$(PYTHON_INTERPRETER) $(datamain) --dataset sine --n_samples $(N1) --noise $(EPS1) --seed $(SEED1) $(ARGS1)
-	$(PYTHON_INTERPRETER) $(datamain) --dataset xor --n_samples $(N2) --noise $(EPS2) --seed $(SEED2) $(ARGS2)
-	$(PYTHON_INTERPRETER) $(datamain) --dataset banana --n_samples $(N3) --noise $(EPS3) --seed $(SEED3) $(ARGS3)
+	$(PYTHON) $(DATA_MAIN) --dataset sine   --n_samples $(N1) --noise $(EPS1) --seed $(SEED1) $(ARGS1)
+	$(PYTHON) $(DATA_MAIN) --dataset xor    --n_samples $(N2) --noise $(EPS2) --seed $(SEED2) $(ARGS2)
+	$(PYTHON) $(DATA_MAIN) --dataset banana --n_samples $(N3) --noise $(EPS3) --seed $(SEED3) $(ARGS3)
 
-# make data D=spiral N=1000 EPS=0.08 SEED=1234
+# -----------------------------
+# Help
+# -----------------------------
+.DEFAULT_GOAL := help
+
+help:
+	@echo ""
+	@echo "Targets:"
+	@echo "  run               (generic)          VARIANT=toy-dense|toy-mf|scale DATASET=... CONFIG=..."
+	@echo "  run-toy-dense     | run-toy-mf       (toy presets)  MODE=<...> [EXTRA='...']"
+	@echo "  run-scale                           (scale preset) MODE=<...> [EXTRA='...']"
+	@echo ""
+	@echo "  train_map | train_inducing | strain_inducing"
+	@echo "  visualize | visualize_full | svisualize | svisualize_full"
+	@echo "  train_map_scale | train_inducing_scale"
+	@echo ""
+	@echo "  debug_map | debug_inducing | debug_visualize"
+	@echo "  data | all-data"
+	@echo ""
+	@echo "Variables (override with VAR=value):"
+	@printf "  %-14s %s\n" "TOY_DATASET"   "$(TOY_DATASET)"
+	@printf "  %-14s %s\n" "TOY_MODEL"     "$(TOY_MODEL)"
+	@printf "  %-14s %s\n" "CONFIG_TOY"    "$(CONFIG_TOY)"
+	@printf "  %-14s %s\n" "SCALE_DATASET" "$(SCALE_DATASET)"
+	@printf "  %-14s %s\n" "SCALE_MODEL"   "$(SCALE_MODEL)"
+	@printf "  %-14s %s\n" "CONFIG_SCALE"  "$(CONFIG_SCALE)"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make run-toy-mf MODE=train_inducing EXTRA='--alpha_ip 1'"
+	@echo "  make run-scale MODE=train_map"
+	@echo "  make visualize_full"
