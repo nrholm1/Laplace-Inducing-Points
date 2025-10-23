@@ -61,7 +61,7 @@ def _build_model_and_vars(variant: str, model_cfg: dict, dummy_input):
 
 
 def _get_dataloaders(variant: str, dataset: str, batch_size: int, *, aug=None, num_workers=None):
-    if variant in ["toy-dense", "toy-mf"]:
+    if variant == "toy":
         # toy dataloaders: (train, test, val)
         return get_toy_dataloaders(dataset=dataset, batch_size=batch_size)
     else:
@@ -165,7 +165,7 @@ def main():
     ip_cfg_pytree = ip_config_from_dict(
         ip_cfg_raw,
         model_type=model_type,
-        scalable=variant != "toy-dense",
+        scalable=False #variant != "toy-dense",
     )
     
 
@@ -267,7 +267,6 @@ def main():
     )
     zoptimizer = optax.adam(learning_rate=schedule)
 
-
     if args.mode in ["train_inducing", "full_pipeline"]:
         rng_ip = jax.random.PRNGKey(seed_ip)
         z_ip, alpha_ip, map_state = train_inducing_points(
@@ -329,7 +328,7 @@ def main():
         )
         plt.tight_layout()
         suffix_if_matrixfree = "_mf"
-        filename = f"fig/{args.dataset}_{model_type}_lla_{'full' if full_lla else 'ip'}{suffix_if_matrixfree if is_matrix_free else ""}.pdf"
+        filename = f"fig/{args.dataset}_{model_type}_lla_{'full' if full_lla else 'ip'}{suffix_if_matrixfree if is_matrix_free else ''}.pdf"
         plt.savefig(
             filename
         )
