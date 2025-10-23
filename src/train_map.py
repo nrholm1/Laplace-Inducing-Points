@@ -124,11 +124,9 @@ def train_map(state: TrainState,
 
     pbar = tqdm(range(num_epochs), ncols=80)
     for epoch in pbar:
-        # ── optimisation ────────────────────────────────────────────
         for batch in make_iter(train_loader):
             state, train_loss = _map_step(state, batch, model_type, alpha)
 
-        # ── evaluation every 4 epochs ──────────────────────────────
         if epoch % 1 == 0:
             test_loss = 0.0
             test_acc  = 0.0
@@ -140,9 +138,9 @@ def train_map(state: TrainState,
 
             n = len(test_loader)
             if model_type == "classifier":
-                descr = f"[NLL={test_loss / n:6.4f}  ACC={test_acc / n:5.3f}]"
+                descr = f"[Test NLL={test_loss / n:6.4f}  Test ACC={test_acc / n:5.3f}]"
             else:
-                descr = f"[NLL={test_loss / n:6.4f}]"
+                descr = f"[Test NLL={test_loss / n:6.4f}]"
             pbar.set_description(descr)
 
     return state

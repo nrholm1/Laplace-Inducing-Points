@@ -23,8 +23,8 @@ TOY_MODEL     ?= toyclassifier
 CONFIG_TOY    := config/toy/$(TOY_MODEL)_$(TOY_DATASET).yml
 
 # Scale presets (large scale)
-SCALE_DATASET ?= cifar10
-SCALE_MODEL   ?= resnet1
+SCALE_DATASET ?= mnist
+SCALE_MODEL   ?= mini
 CONFIG_SCALE  := config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml
 
 # Runners
