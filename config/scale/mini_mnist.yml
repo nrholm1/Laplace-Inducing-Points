@@ -3,30 +3,41 @@ model:
   type:                  classifier
   seed:                  1337_420
   # MiniCNN-specific
-  c1:                    16
-  c2:                    32
+  c1:                    8
+  c2:                    16
   num_classes:           10
   checkpoint:            false
 
 optimization:
-  alpha:                 0.0005
   full_set_size:         58_800
+  alpha:                 0.0001
+
   map:
     lr:                  0.001
     seed:                32132132
     epochs:              500
     batch_size:          128
-  ip:
-    m:                   200
-    lr:                  0.008
-    seed:                280300
-    epochs:              250
-    batch_size:          128
-    mc_samples:          200
-    st_samples:          256
-    slq_samples:         1
-    slq_num_matvecs:     200
 
-sampling:
-  mc_samples:            100
-  invsqrt_num_matvecs:   128
+  ip:
+    m:                   1000
+    batch_size:          512
+
+    epochs:              500
+    lr:                  0.03
+    seed:                1234
+
+    # Used for inference MC
+    mc_samples:          1000
+
+    # Fraction of Z used per substep when masking
+    ip_batch_frac:       1.00
+
+    # Stochastic-trace and SLQ settings
+    st_samples:          250
+    slq_samples:         1
+    slq_num_matvecs:     40
+
+    # Optional: interleaved alpha tuning
+    alpha_steps_every:   10
+    alpha_steps_burnin:  20
+    alpha_steps_per_call: 0

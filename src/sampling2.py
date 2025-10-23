@@ -26,19 +26,21 @@ def H(p):
     return jnp.diag(p) - jnp.outer(p, p)
     
 def Hsqrt(p):
-    """Symmetric matrix S s.t. H = S Sᵀ"""
+    """Non-Symmetric matrix S s.t. H = S Sᵀ"""
     q = jnp.sqrt(p)
     P = jnp.eye(p.size, dtype=p.dtype) - jnp.outer(q, q)
     S = q[:, None] * P
     return S
 
 def Hsqrtsym(p, tol=1e-6):
+    """Symmetric matrix S s.t. H = S Sᵀ"""
     _H = H(p)
     E,V = jnp.linalg.eigh(_H)
     S = jnp.where(E > tol, jnp.sqrt(E), 0.0)
     return (V*S) @ V.T
 
 def Hinvsqrt(p, tol=1e-6):
+    """Also symmetric matrix."""
     _H = H(p)
     E,V = jnp.linalg.eigh(_H)
     E_safe = jnp.maximum(E, tol)
@@ -49,12 +51,12 @@ def Hinvsqrt(p, tol=1e-6):
 
 
 def get_lsmr_system(data, _alpha_inv_sqrt, v, map_state, *, beta_sqrt, model_type='classifier'):
+    # todo ATM hardcoded to model_type == classifier
     flat_params,unravel_fn = flatten_nn_params(map_state.params)
     f_apply = get_f_apply(map_state, unravel_fn, model_type)
     f_out, vj_fun = jax.vjp(lambda _p: f_apply(_p, data), flat_params)
     p1 = jax.nn.softmax(f_out, axis=1)
     B = beta_sqrt * jax.vmap(Hsqrt)(p1)
-    # B = beta_sqrt * jax.vmap(Hsqrtsym)(p1) # eigh-based symmetric variant for debugging (slower - I think)
     
     _, unravel_fn = ravel_pytree(v)
     
@@ -125,8 +127,6 @@ def get_conditional_theta_sampler(data, alpha, beta, map_state, *, atol=1e-3, bt
         key_theta, key_data = jax.random.split(key, 2)
         theta0 = sample_theta(key_theta, alpha, D, num_samples=num_samples)
         y0 = sample_logits_given_theta(key_data, theta0, data, map_state, beta=beta)
-        # f_map = f_apply(flat_params, data)
-        # residuals = f_map[None,...] - y0
         residuals = - y0
         return theta0 + jax.vmap(_K)(residuals)
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import pdb
 from typing import Callable, Tuple
 
 import jax
@@ -23,10 +24,11 @@ from src.sampling2 import get_conditional_theta_sampler
 
 
 def _mask_Z(Z, mask_bool):
+    Zf = Z.astype(float)
     return jnp.where(
         mask_bool[(...,) + (None,) * (Z.ndim - 1)],
-        Z,
-        jax.lax.stop_gradient(Z),
+        Zf,
+        jax.lax.stop_gradient(Zf),
     )
 
 def _mask_from_indices(M, batch_idx, dtype=jnp.bool_):
@@ -56,7 +58,7 @@ def _objective_mf(
     Scalable objective using stochastic trace + SLQ.
     """
     
-    key_trace,key_slq,key_z = jax.random.split(key, 3)
+    key_trace,key_slq,key_mask = jax.random.split(key, 3)
     
     if full_set_size is None:
         raise ValueError("full_set_size must be provided for matrix-free objective.")
@@ -65,10 +67,12 @@ def _objective_mf(
     beta = N / M
 
     # Minibatch subset of inducing points
-    ip_batch_size = max(1, int(M * ip_cfg.ip_batch_frac))
-    B = jax.random.permutation(key_z, M)[:ip_batch_size]
-    batch_mask = _mask_from_indices(M, B)
-    Z_eff = _mask_Z(Z, batch_mask)
+    # ip_batch_size = max(1, int(M * ip_cfg.ip_batch_frac))
+    # B = jax.random.permutation(key_mask, M)[:ip_batch_size]
+    # batch_mask = _mask_from_indices(M, B)
+    # Z_eff = _mask_Z(Z, batch_mask)
+    Z_eff = Z
+    # pdb.set_trace()
 
     # Curvature on data
     ggn_real = compute_curvature_approx(
@@ -163,9 +167,9 @@ def _objective_dense(
     solve_Sz_S = jnp.linalg.solve(S_z, S)
     trace_term = jnp.trace(solve_Sz_S)
 
-    _, logdet_S = jnp.linalg.slogdet(S)
-    _, logdet_Sz = jnp.linalg.slogdet(S_z)
-    logdet_term = -logdet_S + logdet_Sz
+    sS, logdet_S = jnp.linalg.slogdet(S)
+    sSz, logdet_Sz = jnp.linalg.slogdet(S_z)
+    logdet_term = -sS*logdet_S + sSz*logdet_Sz
 
     return logdet_term + trace_term
 

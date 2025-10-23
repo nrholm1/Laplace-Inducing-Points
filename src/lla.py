@@ -11,12 +11,10 @@ from src.sample import sample
 def compute_curvature_approx(map_state, Z, model_type, alpha, *, 
                              flat_params, unravel_fn, 
                              full_set_size=None,
-                             batch_idx=None
                              ):
     ggn_vp = compute_ggn_vp(map_state, Z, model_type=model_type,
                             flat_params=flat_params, unravel_fn=unravel_fn,
-                            full_set_size=full_set_size,
-                            batch_idx=batch_idx)
+                            full_set_size=full_set_size)
     def curvature_vp(v):
         return ggn_vp(v) + alpha * v
     return curvature_vp

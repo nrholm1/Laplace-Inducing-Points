@@ -10,7 +10,6 @@ from src.toymodels import SimpleClassifier
 
 class MiniCNN(nn.Module):
     """Tiny CNN for MNIST/FMNIST (also runs on CIFAR-10).
-    ~1.4k params with (8,16) channels and a 10-way head.
     """
     c1: int = 8
     c2: int = 16
@@ -19,7 +18,7 @@ class MiniCNN(nn.Module):
     checkpoint: bool = False  # set True to remat convs
 
     @nn.compact
-    def __call__(self, x, *args, **kwargs):
+    def __call__(self, x, *, train=False):
         # Accept (B,H,W,1) or (H,W,1); (B,28,28,1) for MNIST, (B,32,32,3) for CIFAR-10
         if x.ndim == 3:   # missing batch dim
             x = x[None, ...]

@@ -42,6 +42,7 @@ run:
 run-toy-dense:
 	@$(MAKE) run VARIANT=toy-dense DATASET="$(TOY_DATASET)" CONFIG="$(CONFIG_TOY)" MODE="$(MODE)" EXTRA='$(EXTRA)'
 
+
 run-toy-mf:
 	@$(MAKE) run VARIANT=toy-mf DATASET="$(TOY_DATASET)" CONFIG="$(CONFIG_TOY)" MODE="$(MODE)" EXTRA='$(EXTRA)'
 
@@ -72,10 +73,10 @@ svisualize:
 
 # Scale shortcuts
 train_map_scale:
-	@$(MAKE) run-scale MODE=train_map
+	@$(MAKE) run-scale MODE=train_map EXTRA='--alpha_ip 1'
 
 train_inducing_scale:
-	@$(MAKE) run-scale MODE=train_inducing
+	@$(MAKE) run-scale MODE=train_inducing EXTRA='--alpha_ip 1'
 
 
 # Debug (debugpy)
@@ -88,13 +89,16 @@ debug_run:
 		--dataset $(DATASET) \
 		--config $(CONFIG) \
 		$(EXTRA) > debug.log 2>&1 & \
-	sleep 1 ; echo "debugpy ready (port 5678)"
+	sleep 1; echo "debugpy ready (port 5678)"
 
 debug_map:
 	@$(MAKE) debug_run VARIANT=toy-dense DATASET=$(TOY_DATASET) CONFIG=$(CONFIG_TOY) MODE=train_map
 
 debug_inducing:
 	@$(MAKE) debug_run VARIANT=toy-mf DATASET=$(TOY_DATASET) CONFIG=$(CONFIG_TOY) MODE=train_inducing EXTRA='--alpha_ip 1 $(EXTRA)'
+
+debug_inducing_scale:
+	@$(MAKE) debug_run VARIANT=scale DATASET=$(SCALE_DATASET) CONFIG=$(CONFIG_SCALE) MODE=train_inducing EXTRA='--alpha_ip 1 $(EXTRA)'
 
 debug_visualize:
 	@$(MAKE) debug_run VARIANT=toy-mf DATASET=$(TOY_DATASET) CONFIG=$(CONFIG_TOY) MODE=visualize

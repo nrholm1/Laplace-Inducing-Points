@@ -3,28 +3,11 @@ import jax
 import jax.numpy as jnp
 from functools import partial
 
-from src.utils import flatten_nn_params
-
-
-def _mask_Z(Z, mask_bool):
-    return jnp.where(mask_bool[(...,) + (None,) * (Z.ndim - 1)],
-                     Z,
-                     jax.lax.stop_gradient(Z))
-
-def _mask_from_indices(M, batch_idx, dtype=jnp.bool_):
-    mask = jnp.zeros((M,), dtype=dtype)
-    return mask.at[batch_idx].set(True)
-
 
 def compute_W_vps(state, Z, model_type, *, 
                   flat_params, unravel_fn, 
-                  full_set_size=None, blockwise=False,
-                  batch_idx=None):
+                  full_set_size=None, blockwise=False):
     M = Z.shape[0]
-    
-    if batch_idx is not None:
-        batch_mask = _mask_from_indices(M, jnp.asarray(batch_idx, jnp.int32))
-        Z = _mask_Z(Z, batch_mask)
     
     N = full_set_size or M
     scale = jnp.sqrt(N / M)
@@ -96,13 +79,8 @@ def compute_W_vps(state, Z, model_type, *,
 
 def compute_ggn_vp(state, Z, model_type, *, 
                    flat_params, unravel_fn, 
-                   full_set_size=None,
-                   batch_idx=None):
+                   full_set_size=None):
     M = Z.shape[0]
-    
-    if batch_idx is not None:
-        batch_mask = _mask_from_indices(M, jnp.asarray(batch_idx, jnp.int32))
-        Z = _mask_Z(Z, batch_mask) 
         
     N = full_set_size or M
     scale = (N / M)
@@ -156,7 +134,7 @@ def compute_ggn_dense(state, Z, model_type, *, flat_params, unravel_fn, full_set
 
     def body_fun(i, acc):
         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-        J = jax.jacobian(lambda p: model_fun(p, zi))(flat_params)
+        J = jax.jacobian(lambda p: model_fun(p, zi))(flat_params).squeeze()
         if model_type == "classifier":
             fxi = model_fun(flat_params, zi)
             probs = jax.nn.softmax(fxi)
