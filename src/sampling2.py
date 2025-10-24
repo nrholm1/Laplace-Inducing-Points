@@ -2,6 +2,7 @@ import pdb
 import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
+from jax import ShapeDtypeStruct as SDS
 from functools import partial
 
 from matfree.lstsq import lsmr
@@ -50,18 +51,20 @@ def Hinvsqrt(p, tol=1e-6):
 
 
 
-def get_lsmr_system(data, _alpha_inv_sqrt, v, map_state, *, beta_sqrt, model_type='classifier'):
+def get_lsmr_system(data, _alpha_inv_sqrt, beta_sqrt, v, map_state, *, out_shape, model_type='classifier'):
     # todo ATM hardcoded to model_type == classifier
     flat_params,unravel_fn = flatten_nn_params(map_state.params)
     f_apply = get_f_apply(map_state, unravel_fn, model_type)
-    f_out, vj_fun = jax.vjp(lambda _p: f_apply(_p, data), flat_params)
+    f_out = f_apply(flat_params, data)
     p1 = jax.nn.softmax(f_out, axis=1)
     B = beta_sqrt * jax.vmap(Hsqrt)(p1)
     
     _, unravel_fn = ravel_pytree(v)
     
     def vecmat(_flat_vec):
+        _, vj_fun = jax.vjp(lambda _p: f_apply(_p, data), flat_params)
         vec = unravel_fn(_flat_vec)
+        # vec = _flat_vec.reshape(out_shape)
         x0 = jnp.einsum('bij,bj->bi', B, vec)
         x1 = vj_fun(x0)[0]
         x2,_ = ravel_pytree(x1)
@@ -75,14 +78,14 @@ def get_lsmr_system(data, _alpha_inv_sqrt, v, map_state, *, beta_sqrt, model_typ
 
 
 
-def get_K(_data, _alpha, _beta, map_state, *, atol=1e-3, btol=1e-3, ctol=1e-4):
+def get_K(_data, _alpha, _beta, map_state, out_shape, *, atol=1e-3, btol=1e-3, ctol=1e-4):
     solve = lsmr(atol=atol, btol=btol, ctol=ctol)
     _alpha_inv_sqrt = jnp.sqrt(1.0 / _alpha)
     _beta_sqrt = jnp.sqrt(_beta)
     
-    @jax.jit
+    # @jax.jit
     def K(v):
-        vecmat, u1 = get_lsmr_system(_data, _alpha_inv_sqrt, v, map_state, beta_sqrt=_beta_sqrt)
+        vecmat, u1 = get_lsmr_system(_data, _alpha_inv_sqrt, _beta_sqrt, v, map_state, out_shape=out_shape)
         xi, info = solve(vecmat, u1, damp=1.0)
         return _alpha_inv_sqrt * xi
     
@@ -100,7 +103,6 @@ def sample_logits_given_theta(key, theta0, real_data, map_state, *, beta, model_
     f_apply = get_f_apply(map_state, unravel_fn, model_type)
     
     def linearized_fun(_t0):
-        # Returns f(θ), Jθ_0
         _f_out,_jv = jax.jvp(
             lambda _p: f_apply(_p, real_data), (flat_params,), (_t0,)
         )
@@ -118,17 +120,17 @@ def sample_logits_given_theta(key, theta0, real_data, map_state, *, beta, model_
     return bmm1 + jv
 
 
-def get_conditional_theta_sampler(data, alpha, beta, map_state, *, atol=1e-3, btol=1e-3, ctol=1e-4):
-    _K = get_K(data, alpha, beta, map_state, atol=atol, btol=btol, ctol=ctol)
+def get_conditional_theta_sampler(data, alpha, beta, map_state, out_shape, *, atol=1e-3, btol=1e-3, ctol=1e-4):
+    _K = get_K(data, alpha, beta, map_state, out_shape, atol=atol, btol=btol, ctol=ctol)
     D = count_model_params(map_state.params)
     
     @partial(jax.jit, static_argnames=("num_samples",))
-    def sample_theta_given_data(key, *, num_samples=1):
-        key_theta, key_data = jax.random.split(key, 2)
+    def sample_theta_given_data(key, *, num_samples):
+        key_theta, key_logits = jax.random.split(key, 2)
         theta0 = sample_theta(key_theta, alpha, D, num_samples=num_samples)
-        y0 = sample_logits_given_theta(key_data, theta0, data, map_state, beta=beta)
+        y0 = sample_logits_given_theta(key_logits, theta0, data, map_state, beta=beta)
         residuals = - y0
-        return theta0 + jax.vmap(_K)(residuals)
+        return theta0 + jax.lax.map(_K, residuals)
 
     return sample_theta_given_data
 
@@ -153,7 +155,7 @@ if __name__ == '__main__':
     
     _key = lambda x: jax.random.PRNGKey(x)
 
-    dataset = 'xor'
+    dataset = 'banana'
     model_name = f'toyclassifier_{dataset}'
     cfg_path = f'config/toy/{model_name}.yml'
 
@@ -217,8 +219,8 @@ if __name__ == '__main__':
     beta_sqrt = jnp.sqrt(beta)
 
     
-    
-    theta_sampler = get_conditional_theta_sampler(IP_DATA, alpha, beta, map_state, atol=1e-4, btol=1e-4, ctol=1e-5)
+    out_shape = (IP_DATA.shape[0], num_c)
+    theta_sampler = get_conditional_theta_sampler(IP_DATA, alpha, beta, map_state, out_shape, atol=1e-4, btol=1e-4, ctol=1e-5)
     
     
 

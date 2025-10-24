@@ -165,7 +165,7 @@ def main():
     ip_cfg_pytree = ip_config_from_dict(
         ip_cfg_raw,
         model_type=model_type,
-        scalable=False #variant != "toy-dense",
+        scalable=variant != "toy-dense",
     )
     
 
@@ -298,6 +298,8 @@ def main():
     if args.mode == "visualize":
         if variant not in ["toy-dense", "toy-mf"]:
             print("[WARN] Visualization is only implemented for the toy pipeline; skipping.")
+            pdb.set_trace()
+            plt.clf(); plt.imshow(z_ip[501], cmap='gray'); plt.grid(); plt.savefig("mnist.png")
             return
 
         os.makedirs("fig", exist_ok=True)
@@ -334,7 +336,7 @@ def main():
         )
         print("[DONE] Visualization complete.")
         print(f"Saved to {filename}")
-
+    
 
 if __name__ == "__main__":
     main()

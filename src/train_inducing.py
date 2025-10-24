@@ -102,8 +102,9 @@ def _objective_mf(
     d_z = int(np.prod(inner_shape))
 
     # Stochastic trace
+    out_shape = inner_shape
     theta_sampler = get_conditional_theta_sampler(
-        Z_eff, alpha, beta, state, atol=1e-4, btol=1e-4, ctol=1e-5
+        Z_eff, alpha, beta, state, out_shape, atol=1e-4, btol=1e-4, ctol=1e-5
     )
     integrand = matfree_stochtrace.integrand_trace()
     sampler = lambda __key: theta_sampler(__key, num_samples=ip_cfg.st_samples)
@@ -167,9 +168,9 @@ def _objective_dense(
     solve_Sz_S = jnp.linalg.solve(S_z, S)
     trace_term = jnp.trace(solve_Sz_S)
 
-    sS, logdet_S = jnp.linalg.slogdet(S)
+    sS, logdet_S   = jnp.linalg.slogdet(S)
     sSz, logdet_Sz = jnp.linalg.slogdet(S_z)
-    logdet_term = -sS*logdet_S + sSz*logdet_Sz
+    logdet_term    = -sS*logdet_S + sSz*logdet_Sz
 
     return logdet_term + trace_term
 
