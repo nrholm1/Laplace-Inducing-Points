@@ -11,12 +11,13 @@ import numpy as np
 import optax
 from tqdm import tqdm
 
-from matfree import stochtrace as matfree_stochtrace
+from matfree import stochtrace as matfree_stochtrace, funm, decomp
 
 from src.scalemodels import TrainState
 from src.train_alpha import train_alpha
 from src.lla import compute_curvature_approx_dense, compute_curvature_approx
-from src.ggn import compute_W_vps
+# from src.ggn import compute_W_vps
+from src.ggn2 import compute_ggn_vp, compute_W_vps
 from src.utils import flatten_nn_params, IPConfig
 from src.slq import estimate_logdet_slq
 from src.sampling2 import get_conditional_theta_sampler
@@ -60,74 +61,77 @@ def _objective_mf(
     
     key_trace,key_slq,key_mask = jax.random.split(key, 3)
     
-    if full_set_size is None:
-        raise ValueError("full_set_size must be provided for matrix-free objective.")
     N = full_set_size
     M = Z.shape[0]
     beta = N / M
 
     # Minibatch subset of inducing points
-    # ip_batch_size = max(1, int(M * ip_cfg.ip_batch_frac))
-    # B = jax.random.permutation(key_mask, M)[:ip_batch_size]
-    # batch_mask = _mask_from_indices(M, B)
-    # Z_eff = _mask_Z(Z, batch_mask)
-    Z_eff = Z
-    # pdb.set_trace()
+    if ip_cfg.ip_batch_frac == 1.0:
+        Z_eff = Z
+    else:
+        ip_batch_size = max(1, int(M * ip_cfg.ip_batch_frac))
+        B = jax.random.permutation(key_mask, M)[:ip_batch_size]
+        batch_mask = _mask_from_indices(M, B)
+        Z_eff = _mask_Z(Z, batch_mask)
 
-    # Curvature on data
-    ggn_real = compute_curvature_approx(
-        state,
+    # Curvature from "real" data
+    W_real, WT_real = compute_W_vps(
         X,
-        alpha=alpha,
-        model_type=ip_cfg.model_type,
-        flat_params=flat_params,
-        unravel_fn=unravel_fn,
-        full_set_size=N,
+        flat_params,
+        state.apply_fn,
+        unravel_fn,
+        mode="memeff"
     )
+    ggn_real_vp = lambda v: W_real(WT_real(v))
+    ggn_real    = lambda v: alpha*v + beta*ggn_real_vp(v)
 
-    # W(V)Ps from inducing points
-    Wz, WzT = compute_W_vps(
-        state,
+    # Curvature from inducing points
+    Wz, WTz = compute_W_vps(
         Z_eff,
-        model_type=ip_cfg.model_type,
-        flat_params=flat_params,
-        unravel_fn=unravel_fn,
-        full_set_size=None,
+        flat_params,
+        state.apply_fn,
+        unravel_fn,
+        mode="memeff"
     )
-
-    # Dimensions for SLQ space
-    D = shapes.D
-    x0 = jnp.zeros((D,), dtype=getattr(flat_params, "dtype", jnp.float32))
-    inner_shape = WzT(x0).shape
-    d_z = int(np.prod(inner_shape))
 
     # Stochastic trace
-    out_shape = inner_shape
     theta_sampler = get_conditional_theta_sampler(
-        Z_eff, alpha, beta, state, out_shape, atol=1e-4, btol=1e-4, ctol=1e-5
+        Z_eff, alpha, beta, state, atol=1e-3, btol=1e-3, ctol=1e-4
     )
     integrand = matfree_stochtrace.integrand_trace()
     sampler = lambda __key: theta_sampler(__key, num_samples=ip_cfg.st_samples)
     estimate = matfree_stochtrace.estimator(integrand, sampler)
     trace_term = estimate(lambda v: ggn_real(v), key_trace)
 
-    # SLQ on I + (beta/alpha) W^T W
+    # Dimensions for SLQ space
+    D = shapes.D
+    x0 = jnp.zeros((D,), dtype=getattr(flat_params, "dtype", jnp.float32))
+    inner_shape = WTz(x0).shape
+    d_z = int(np.prod(inner_shape))
     slq_num_matvecs = M if ip_cfg.slq_num_matvecs is None else min(ip_cfg.slq_num_matvecs, M)
 
+    # SLQ on I + (beta/alpha) W^T W
     def small_slq_target(u_flat):
         u = u_flat.reshape(inner_shape)
-        v_flat = WzT(Wz(u)).reshape(-1)
+        v_flat = WTz(Wz(u)).reshape(-1)
         return u_flat + (beta / alpha) * v_flat
 
-    res = estimate_logdet_slq(
-        small_slq_target,
-        D=d_z,
-        M=M,
-        key=key_slq,
-        slq_samples=ip_cfg.slq_samples,
-        slq_num_matvecs=slq_num_matvecs,
-    )
+    v0 = jnp.zeros((d_z,))
+    tridiag = decomp.tridiag_sym(slq_num_matvecs)
+    problem = funm.integrand_funm_product_logdet(tridiag)
+    sampler = matfree_stochtrace.sampler_rademacher(v0, num=ip_cfg.slq_num_matvecs)
+    estimator = matfree_stochtrace.estimator(problem, sampler=sampler)
+    
+    res = estimator(small_slq_target, key_slq)
+
+    
+    # Dense "exact" logdet on small matrix
+    # WTzd = jax.jacrev(WTz)(x0).reshape(-1, D)
+    # sign,logdet = jnp.linalg.slogdet(jnp.eye(d_z) + beta/alpha*WTzd@WTzd.T)
+    # res = sign*logdet
+    
     logdet_term = D * jnp.log(alpha) + res
+    
     return trace_term + logdet_term
 
 

@@ -42,6 +42,22 @@ class MiniCNN(nn.Module):
         return logits
 
 
+class MiniMLP(nn.Module):
+    numh: int # number of hidden units per layer
+    numl: int # number of layers
+    numc: int # number of classes
+    
+    @nn.compact
+    def __call__(self, X, *args, **kwargs):
+        # batch_size = X.shape[0]
+        # X = X.reshape(batch_size, -1) # flatten
+        for _ in range(self.numl):
+            X = nn.relu(nn.Dense(features=self.numh)(X))
+        logits = nn.Dense(features=self.numc)(X)
+        return logits
+
+
+
 
 
 class ConvPoolBlock(nn.Module):
@@ -219,6 +235,12 @@ def get_model(model_cfg):
     
     if model_name == "LeNet5":
         return LeNet5()
+    elif model_name == "MiniMLP":
+        model = MiniMLP(numh=model_cfg["numh"], 
+                        numl=model_cfg["numl"], 
+                        numc=model_cfg["numc"],
+        )
+        return model
     elif model_name == "MiniCNN":
         model = MiniCNN(c1=model_cfg.get("c1", 8), 
                         c2=model_cfg.get("c2", 16), 

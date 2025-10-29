@@ -16,7 +16,8 @@ def load_mnist_numpy(train=True):
                         download=True, transform=transform)
     imgs, labs = [], []
     for img, lab in ds:
-        imgs.append(img.reshape(28, 28, 1))
+        # imgs.append(img.reshape(28, 28, 1))
+        imgs.append(img.reshape(784))
         labs.append(lab)
     return np.stack(imgs, axis=0), np.array(labs, dtype=np.int32)
 
