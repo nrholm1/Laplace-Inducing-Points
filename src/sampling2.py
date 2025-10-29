@@ -51,20 +51,18 @@ def Hinvsqrt(p, tol=1e-6):
 
 
 
-def get_lsmr_system(data, _alpha_inv_sqrt, beta_sqrt, v, map_state, *, out_shape, model_type='classifier'):
+def get_lsmr_system(data, _alpha_inv_sqrt, beta_sqrt, v, map_state, *, model_type='classifier'):
     # todo ATM hardcoded to model_type == classifier
-    flat_params,unravel_fn = flatten_nn_params(map_state.params)
-    f_apply = get_f_apply(map_state, unravel_fn, model_type)
-    f_out = f_apply(flat_params, data)
+    flat_params,_unravel_fn = flatten_nn_params(map_state.params)
+    f_apply = get_f_apply(map_state, _unravel_fn, model_type)
+    f_out, vj_fun = jax.vjp(lambda _p: f_apply(_p, data), flat_params)
     p1 = jax.nn.softmax(f_out, axis=1)
     B = beta_sqrt * jax.vmap(Hsqrt)(p1)
     
     _, unravel_fn = ravel_pytree(v)
     
     def vecmat(_flat_vec):
-        _, vj_fun = jax.vjp(lambda _p: f_apply(_p, data), flat_params)
         vec = unravel_fn(_flat_vec)
-        # vec = _flat_vec.reshape(out_shape)
         x0 = jnp.einsum('bij,bj->bi', B, vec)
         x1 = vj_fun(x0)[0]
         x2,_ = ravel_pytree(x1)
@@ -78,18 +76,55 @@ def get_lsmr_system(data, _alpha_inv_sqrt, beta_sqrt, v, map_state, *, out_shape
 
 
 
-def get_K(_data, _alpha, _beta, map_state, out_shape, *, atol=1e-3, btol=1e-3, ctol=1e-4):
+def get_K(_data, _alpha, _beta, map_state, *, atol=1e-3, btol=1e-3, ctol=1e-4):
     solve = lsmr(atol=atol, btol=btol, ctol=ctol)
     _alpha_inv_sqrt = jnp.sqrt(1.0 / _alpha)
     _beta_sqrt = jnp.sqrt(_beta)
     
     # @jax.jit
     def K(v):
-        vecmat, u1 = get_lsmr_system(_data, _alpha_inv_sqrt, _beta_sqrt, v, map_state, out_shape=out_shape)
+        vecmat, u1 = get_lsmr_system(_data, _alpha_inv_sqrt, _beta_sqrt, v, map_state)
         xi, info = solve(vecmat, u1, damp=1.0)
-        return _alpha_inv_sqrt * xi
+        return _alpha_inv_sqrt * xi, info
     
     return K
+
+# def get_K(data, alpha, beta, map_state, *, atol=1e-3, btol=1e-3, ctol=1e-4):
+#     solve = lsmr(atol=atol, btol=btol, ctol=ctol)
+#     alpha_inv_sqrt = jnp.sqrt(1.0 / alpha)
+#     beta_sqrt = jnp.sqrt(beta)
+
+#     # ----- build once -----
+#     flat_params, unravel_params = flatten_nn_params(map_state.params)
+#     f_apply = get_f_apply(map_state, unravel_params, 'classifier')
+
+#     # one-time linearization (cheap to reuse in the matvecs)
+#     f_out, vjp_fn = jax.vjp(lambda p: f_apply(p, data), flat_params)
+#     p = jax.nn.softmax(f_out, axis=1)                      # [B, C]
+#     B = beta_sqrt * jax.vmap(Hsqrt)(p)                     # [B, C, C]  (kept dense)
+#     v_shape = f_out.shape                                  # (B, C)
+
+#     # param-space flattening helper (structure fixed)
+#     # Using reshape for v; for param cotangent we still ravel, but we avoid ravel for v.
+#     def vecmat(flat_vec):                                   # A @ x
+#         vec = flat_vec.reshape(v_shape)                     # R^{BC} -> [B,C]
+#         x0 = jnp.einsum('bij,bj->bi', B, vec)               # [B,C]
+#         x1 = vjp_fn(x0)[0]                                  # params-like pytree
+#         x2, _ = ravel_pytree(x1)                            # R^{D}
+#         return alpha_inv_sqrt * x2
+
+#     def apply_BT(v):                                        # B^T @ v
+#         return jnp.einsum('bji,bj->bi', B, v)               # [B,C]
+#     # ----- end build once -----
+
+#     def K(v):
+#         # Only the RHS changes across calls
+#         u1 = apply_BT(v).reshape(-1)                        # flatten to R^{BC}
+#         xi, info = solve(vecmat, u1, damp=1.0)              # xi in R^{BC}
+#         return alpha_inv_sqrt * xi, info
+
+#     return K
+
 
 
 def sample_theta(key, alpha, D, *, num_samples=1):
@@ -120,17 +155,18 @@ def sample_logits_given_theta(key, theta0, real_data, map_state, *, beta, model_
     return bmm1 + jv
 
 
-def get_conditional_theta_sampler(data, alpha, beta, map_state, out_shape, *, atol=1e-3, btol=1e-3, ctol=1e-4):
-    _K = get_K(data, alpha, beta, map_state, out_shape, atol=atol, btol=btol, ctol=ctol)
+def get_conditional_theta_sampler(data, alpha, beta, map_state, *, atol=1e-3, btol=1e-3, ctol=1e-4):
+    _K = get_K(data, alpha, beta, map_state, atol=atol, btol=btol, ctol=ctol)
     D = count_model_params(map_state.params)
     
-    @partial(jax.jit, static_argnames=("num_samples",))
+    # @partial(jax.jit, static_argnames=("num_samples",))
     def sample_theta_given_data(key, *, num_samples):
         key_theta, key_logits = jax.random.split(key, 2)
         theta0 = sample_theta(key_theta, alpha, D, num_samples=num_samples)
         y0 = sample_logits_given_theta(key_logits, theta0, data, map_state, beta=beta)
         residuals = - y0
-        return theta0 + jax.lax.map(_K, residuals)
+        corr,info = jax.vmap(_K)(residuals)
+        return theta0 + corr#, info
 
     return sample_theta_given_data
 
@@ -219,17 +255,15 @@ if __name__ == '__main__':
     beta_sqrt = jnp.sqrt(beta)
 
     
-    out_shape = (IP_DATA.shape[0], num_c)
-    theta_sampler = get_conditional_theta_sampler(IP_DATA, alpha, beta, map_state, out_shape, atol=1e-4, btol=1e-4, ctol=1e-5)
+    theta_sampler = get_conditional_theta_sampler(IP_DATA, alpha, beta, map_state, atol=1e-6, btol=1e-6, ctol=1e-7)
     
     
-
-
     """##
     STATS
     ##"""
-    num_samples = 10_000
-    alot_of_samples = theta_sampler(_key(434343), num_samples=num_samples)
+    num_samples = 10000
+    # alot_of_samples,info = theta_sampler(_key(43434310), num_samples=num_samples)
+    alot_of_samples = theta_sampler(_key(43434310), num_samples=num_samples)
     
     sample_mean = alot_of_samples.mean(axis=0, keepdims=True)
     centered = (alot_of_samples - sample_mean)
@@ -238,17 +272,57 @@ if __name__ == '__main__':
     iso_prior = alpha * jnp.eye(D)
     precision = iso_prior + beta*GGN_ip_dense
     GGN_ip_inv_dense = jnp.linalg.inv(precision)
-    true_trace = jnp.linalg.trace((iso_prior + beta*GGN_data_dense) @ (GGN_ip_inv_dense))
+    true_trace = jnp.linalg.trace((iso_prior + beta*GGN_data_dense) @ (GGN_ip_inv_dense))    
+
+    # integrand = stochtrace.integrand_trace()
+    # sampler = lambda __key: theta_sampler(__key, num_samples=10_000)
+    # estimate = stochtrace.estimator(integrand, sampler)
+    # est_trace = estimate(lambda v: alpha*v + beta*GGN_data(v), _key(188_88_88_88))
+
+    # print(f"Est. trace    = {est_trace:.2f}")
+    # print(f"True trace    = {true_trace:.2f}")
+    
+    # assert jnp.isclose(true_trace, est_trace, rtol=0.05), f"Estimated trace does not match ground truth! EST={est_trace:.1f} vs. TRUE={true_trace:.1f}"
+    
+    import matplotlib.pyplot as plt
+    from matplotlib import colors
+    # import seaborn as sns
+
+    cmap = 'seismic' #sns.color_palette('vlag', as_cmap=True)
+
+    _start = 0
+    _end   = 200
+    true_matrix =    precision[_start:_end, _start:_end] #cov[:_k,:_k]
+    sampled_matrix = sample_precision[_start:_end, _start:_end] #sample_cov[:_k,:_k]
+    diff = jnp.abs(true_matrix - sampled_matrix) / (jnp.abs(true_matrix) + 1e-0)
+
+    fig, axs = plt.subplots(1, 3, figsize=(25, 6))
+
+    # Make limits symmetric so 0 is centered
+    m0 = jnp.abs(true_matrix).max()
+    m1 = jnp.abs(sampled_matrix).max()
+    norm  = colors.TwoSlopeNorm(vmin=-max(m0,m1), vcenter=0, vmax=max(m0,m1))
+    norm0 = norm # colors.TwoSlopeNorm(vmin=-m0, vcenter=0, vmax=m0)
+    norm1 = norm # colors.TwoSlopeNorm(vmin=-m1, vcenter=0, vmax=m1)
+
+    im0 = axs[0].imshow(true_matrix, cmap=cmap, norm=norm0)
+    im1 = axs[1].imshow(sampled_matrix, cmap=cmap, norm=norm1)
+    im2 = axs[2].imshow(diff, cmap='viridis')
+
+    axs[0].set_title("True Precision")
+    axs[1].set_title("Sample Precision")
+    axs[2].set_title("|true - sample| / |true|")
+
+    # fig.colorbar(im0)
+    fig.colorbar(im1)
+    fig.colorbar(im2)
+
+    axs[0].grid()
+    axs[1].grid()
+    axs[2].grid()
+    # plt.show()
+    
+    plt.savefig("precision.png")
     
     # pdb.set_trace()
     
-
-    integrand = stochtrace.integrand_trace()
-    sampler = lambda __key: theta_sampler(__key, num_samples=10_000)
-    estimate = stochtrace.estimator(integrand, sampler)
-    est_trace = estimate(lambda v: alpha*v + beta*GGN_data(v), _key(88_88_88_88))
-
-    print(f"Est. trace    = {est_trace:.2f}")
-    print(f"True trace    = {true_trace:.2f}")
-    
-    assert jnp.isclose(true_trace, est_trace, rtol=0.05), f"Estimated trace does not match ground truth! EST={est_trace:.1f} vs. TRUE={true_trace:.1f}"
