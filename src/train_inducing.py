@@ -95,8 +95,9 @@ def _objective_mf(
     )
 
     # Stochastic trace
+    tol = 1e-4
     theta_sampler = get_conditional_theta_sampler(
-        Z_eff, alpha, beta, state, atol=1e-3, btol=1e-3, ctol=1e-4
+        Z_eff, alpha, beta, state, atol=tol, btol=tol, ctol=tol/10.0
     )
     integrand = matfree_stochtrace.integrand_trace()
     sampler = lambda __key: theta_sampler(__key, num_samples=ip_cfg.st_samples)
@@ -124,12 +125,6 @@ def _objective_mf(
     
     res = estimator(small_slq_target, key_slq)
 
-    
-    # Dense "exact" logdet on small matrix
-    # WTzd = jax.jacrev(WTz)(x0).reshape(-1, D)
-    # sign,logdet = jnp.linalg.slogdet(jnp.eye(d_z) + beta/alpha*WTzd@WTzd.T)
-    # res = sign*logdet
-    
     logdet_term = D * jnp.log(alpha) + res
     
     return trace_term + logdet_term

@@ -52,6 +52,7 @@ def compute_ggn_dense(data, flat_params, apply_fn, unravel_fn, *, mode:str="fast
     
     def ggn_per_datum(xi):
         J, f_out = jax.jacrev(lambda flatp: f_apply(flatp, xi), has_aux=True)(flat_params)
+        # J = J.squeeze() # ! for CNN only
         probs = jax.nn.softmax(f_out)
         H = H_dense(probs)
         return J.T @ H @ J
@@ -74,7 +75,7 @@ def compute_ggn_vp(data, flat_params, apply_fn, unravel_fn, *, mode:str="fast"):
     f_apply = get_f_apply(apply_fn, unravel_fn)
     
     def ggn_vp_per_datum(xi, v):
-        f = lambda flatp: f_apply(flatp, xi)
+        f = lambda flatp: f_apply(flatp, xi)#.squeeze(0) # ! squeeze for CNN only
         
         f_out, Jv = jax.jvp(f, (flat_params,), (v,))
         _, JT_fun = jax.vjp(f, flat_params)
@@ -103,7 +104,7 @@ def compute_W_vps(data, flat_params, apply_fn, unravel_fn, *, mode:str="fast"):
     f_apply = get_f_apply(apply_fn, unravel_fn)
     
     def WT_per_datum(xi, v):
-        f = lambda flatp: f_apply(flatp, xi)
+        f = lambda flatp: f_apply(flatp, xi)#.squeeze(0) # ! squeeze for CNN only
         
         f_out, Jv = jax.jvp(f, (flat_params,), (v,))
         probs = jax.nn.softmax(f_out)

@@ -1,15 +1,23 @@
+# train_alpha.py
 from __future__ import annotations
 from typing import Callable, Optional
 
+import numpy as np
 import jax
 import jax.numpy as jnp
 
 from src.train_map import log_joint
-from src.lla import compute_curvature_approx
 from src.utils import flatten_nn_params
-from src.slq import estimate_logdet_slq
 from src.scalemodels import TrainState
 from src.utils import IPConfig
+
+from matfree import (
+    decomp,
+    funm,
+    stochtrace,
+)
+
+from src.ggn2 import compute_W_vps
 
 
 def _prepare_D(unravel_fn, flat_params, model_type: str) -> int:
@@ -17,6 +25,41 @@ def _prepare_D(unravel_fn, flat_params, model_type: str) -> int:
     if model_type == "regressor":
         D -= 1
     return D
+
+
+def _make_Sz_vp(
+    *,
+    map_state_template: TrainState,
+    Z: jnp.ndarray,
+    alpha: float,
+    flat_params,
+    unravel_fn,
+    full_set_size: Optional[int],
+) -> callable:
+    """
+    Matrix-free curvature on Z: v ↦ alpha*v + beta*GGN_Z(v),
+    with beta = N / M and GGN_Z(v) = Wz(WTz(v)).
+    (Kept for parity with your earlier refactor; not directly used by SLQ below.)
+    """
+    M = int(Z.shape[0])
+    N = M if full_set_size is None else int(full_set_size)
+    beta = N / float(M)
+
+    Wz, WTz = compute_W_vps(
+        Z,
+        flat_params,
+        map_state_template.apply_fn,
+        unravel_fn,
+        mode="memeff",
+    )
+
+    def ggn_vp(v):
+        return Wz(WTz(v))
+
+    def Sz_vp(v):
+        return alpha * v + beta * ggn_vp(v)
+
+    return Sz_vp
 
 
 def _make_optimize_alpha_step(
@@ -28,35 +71,52 @@ def _make_optimize_alpha_step(
     cfg: IPConfig,
     full_set_size: Optional[int],
 ):
-    """Build a single jitted alpha-optimization step capturing all static bits."""
+    """
+    Matches the SLQ construction in train_inducing:
+      - Build Wz, WTz on the inducing set Z
+      - Run SLQ on  I + (beta/alpha) * (W^T W)  in the "small" space
+      - Add D * log(alpha)
+    """
 
     def logdet_term(alpha, Z, key):
-        # curvature operator on inducing points
-        Sz_vp = compute_curvature_approx(
-            map_state_template,
-            Z,
-            alpha=alpha,
-            model_type=cfg.model_type,
-            full_set_size=full_set_size,
-            flat_params=flat_params,
-            unravel_fn=unravel_fn,
-        )
-
-        # SLQ expects a flat->flat mv function
-        def target(u_flat):
-            v = Sz_vp(u_flat.reshape(-1))
-            return v.reshape(-1)
-
+        # Dimensions / scaling
         M = int(Z.shape[0])
-        slq_mv = M if cfg.slq_num_matvecs is None else min(int(cfg.slq_num_matvecs), M)
-        return estimate_logdet_slq(
-            target,
-            D=D,
-            M=M,
-            key=key,
-            slq_samples=int(cfg.slq_samples),
-            slq_num_matvecs=slq_mv,
+        N = M if full_set_size is None else int(full_set_size)
+        beta = N / float(M)
+
+        # Build matrix-free W and W^T on inducing set
+        Wz, WTz = compute_W_vps(
+            Z,
+            flat_params,
+            map_state_template.apply_fn,
+            unravel_fn,
+            mode="memeff",
         )
+
+        # Determine inner shape (the "small" space where W^T maps)
+        x0 = jnp.zeros((D,), dtype=getattr(flat_params, "dtype", jnp.float32))
+        inner_shape = WTz(x0).shape
+        d_z = int(np.prod(inner_shape))
+
+        # SLQ target on the small space: u ↦ u + (beta/alpha) * (W^T W u)
+        def small_slq_target(u_flat):
+            u = u_flat.reshape(inner_shape)
+            v_flat = WTz(Wz(u)).reshape(-1)
+            return u_flat + (beta / alpha) * v_flat
+
+        # Lanczos/SLQ config
+        slq_num_matvecs = M if (cfg.slq_num_matvecs is None) else min(int(cfg.slq_num_matvecs), M)
+        v0 = jnp.zeros((d_z,), dtype=x0.dtype)
+        tri = decomp.tridiag_sym(slq_num_matvecs)
+        problem = funm.integrand_funm_product_logdet(tri)
+        # Use the configured number of SLQ samples (probes)
+        num_probes = int(cfg.slq_samples)
+        sampler = stochtrace.sampler_rademacher(v0, num=num_probes)
+        estimator = stochtrace.estimator(problem, sampler=sampler)
+
+        # Estimate logdet(I + (beta/alpha) W^T W) and add D * log(alpha)
+        res = estimator(small_slq_target, key)
+        return D * jnp.log(alpha) + res
 
     def loss_and_aux(params, map_state, Z, batch, key):
         log_alpha = params["log_alpha"]
@@ -122,6 +182,8 @@ def train_alpha(
     for _ in range(ip_cfg.alpha_steps_per_call):
         batch = get_batch_fn()
         rng, subkey = jax.random.split(rng)
-        log_alpha_state, map_state, _ = step(log_alpha_state, map_state, Z, batch, subkey)
+        log_alpha_state, map_state, _ = step(
+            log_alpha_state, map_state, Z, batch, subkey
+        )
 
     return log_alpha_state, map_state
