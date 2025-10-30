@@ -24,7 +24,7 @@ CONFIG_TOY    := config/toy/$(TOY_MODEL)_$(TOY_DATASET).yml
 
 # Scale presets (large scale)
 SCALE_DATASET ?= mnist
-SCALE_MODEL   ?= mini
+SCALE_MODEL   ?= minimlp
 CONFIG_SCALE  := config/scale/$(SCALE_MODEL)_$(SCALE_DATASET).yml
 
 # Runners
@@ -60,15 +60,21 @@ train_inducing:
 strain_inducing:
 	@$(MAKE) run-toy-mf MODE=train_inducing EXTRA='--alpha_ip 1 $(EXTRA)'
 
+# python main.py train_inducing --variant scale --dataset mnist --config "config/scale/mini_mnist.yml" --alpha_ip 1
+
 visualize:
-	@$(MAKE) run-toy-dense MODE=visualize EXTRA='--alpha_ip 1 $(EXTRA)'
+	@$(MAKE) run-toy-dense MODE=visualize EXTRA='--alpha_ip 0.88 $(EXTRA)'
 
 visualize_full:
-	@$(MAKE) run-toy-dense MODE=visualize EXTRA='--full --alpha_ip 1 $(EXTRA)'
+	@$(MAKE) run-toy-dense MODE=visualize EXTRA='--full --alpha_ip 0.88 $(EXTRA)'
+
+
+visualize_scale:
+	@$(MAKE) run-scale MODE=visualize EXTRA='--alpha_ip 1 $(EXTRA)'
 
 # matrix-free visualize with MC samples (env var mcs or default 1024)
 svisualize:
-	@$(MAKE) run-toy-mf MODE=visualize EXTRA='--alpha_ip 1 $(EXTRA)'
+	@$(MAKE) run-toy-mf MODE=visualize EXTRA='--alpha_ip 0.88 $(EXTRA)'
 
 
 # Scale shortcuts
