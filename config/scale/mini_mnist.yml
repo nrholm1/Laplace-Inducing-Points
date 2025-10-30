@@ -19,10 +19,10 @@ optimization:
     batch_size:          128
 
   ip:
-    m:                   1000
-    batch_size:          512
+    m:                   10
+    batch_size:          256
 
-    epochs:              500
+    epochs:              100
     lr:                  0.03
     seed:                1234
 
@@ -30,12 +30,12 @@ optimization:
     mc_samples:          1000
 
     # Fraction of Z used per substep when masking
-    ip_batch_frac:       1.00
+    ip_batch_frac:       1.0
 
     # Stochastic-trace and SLQ settings
-    st_samples:          250
-    slq_samples:         1
-    slq_num_matvecs:     40
+    st_samples:          32
+    slq_samples:         32
+    slq_num_matvecs:     16
 
     # Optional: interleaved alpha tuning
     alpha_steps_every:   10

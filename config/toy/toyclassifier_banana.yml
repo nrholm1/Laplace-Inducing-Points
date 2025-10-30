@@ -7,7 +7,7 @@ model:
   seed:                  12345
 
 optimization:
-  full_set_size:         450
+  full_set_size:         1280
   alpha:                 0.005
 
   map:
@@ -18,24 +18,22 @@ optimization:
 
   ip:
     m:                   32
-    batch_size:          128
+    batch_size:          64
 
-    epochs:              500
-    lr:                  0.03
+    epochs:              250
+    lr:                  0.015
     seed:                1234
 
     # Used for visualization MC
-    mc_samples:          1000
+    mc_samples:          1_000
 
     # Fraction of Z used per substep when masking
     ip_batch_frac:       1.00
 
-    # Stochastic-trace and SLQ settings
-    st_samples:          250
-    slq_samples:         1
-    slq_num_matvecs:     40
+    st_samples:          32
+    slq_samples:         32
+    slq_num_matvecs:     16
 
-    # Optional: interleaved alpha tuning
-    alpha_steps_every:   10
-    alpha_steps_burnin:  20
-    alpha_steps_per_call: 0
+    alpha_steps_every:     5
+    alpha_steps_burnin:   10
+    alpha_steps_per_call: 10

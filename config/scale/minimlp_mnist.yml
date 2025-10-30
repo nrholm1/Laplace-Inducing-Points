@@ -3,14 +3,14 @@ model:
   type:                  classifier
   seed:                  1337_4201
   # MiniMLP-specific
-  numh:                   512
+  numh:                   16
   numl:                     1
   numc:                    10
   checkpoint:            false
 
 optimization:
   full_set_size:         58_800
-  alpha:                 0.005
+  alpha:                 0.001
 
   map:
     lr:                  0.001
@@ -19,25 +19,25 @@ optimization:
     batch_size:          64
 
   ip:
-    m:                   1000
-    batch_size:          128
+    m:                   500
+    batch_size:          256
 
     epochs:              100
-    lr:                  0.01
+    lr:                  0.02 # -> 0.002
     seed:                1234
 
     # Used for inference MC
     mc_samples:          1000
 
     # Fraction of Z used per substep when masking
-    ip_batch_frac:       1.00
+    ip_batch_frac:       1.0
 
     # Stochastic-trace and SLQ settings
     st_samples:          32
-    slq_samples:         1
-    slq_num_matvecs:     32
+    slq_samples:         32
+    slq_num_matvecs:     16
 
     # Optional: interleaved alpha tuning
-    alpha_steps_every:   10
-    alpha_steps_burnin:  20
-    alpha_steps_per_call: 0
+    alpha_steps_every:    5
+    alpha_steps_burnin:   5
+    alpha_steps_per_call: 1
