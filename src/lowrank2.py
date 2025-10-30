@@ -4,92 +4,77 @@ from functools import partial
 
 from matfree import decomp
 
+# --- X <-> (U, lam) ---
+def _orth_eig_from_X(X: jnp.ndarray):
+    # X = Qx Rx, Gram in small space
+    Qx, Rx = jnp.linalg.qr(X, mode="reduced")         # (D,M),(M,M)
+    G = Rx @ Rx.T                                     # (M,M), PSD
+    lam, V = jnp.linalg.eigh(G)                       # ascending
+    lam = jnp.maximum(lam, 0.0)
+    idx = jnp.argsort(lam)[::-1]
+    lam = lam[idx]
+    U = Qx @ V[:, idx]                                # (D,M), orthonormal
+    return U, lam
 
-# @jax.jit
-def stack_zero_then_XT(X: jnp.ndarray) -> jnp.ndarray:
-    """A = [[0]; X^T]  -> shape (M+1, D) for X in R^{D x M}."""
-    return jnp.vstack([jnp.zeros((1, X.shape[0]), dtype=X.dtype), X.T])
+def _X_from_orth_eig(U: jnp.ndarray, lam: jnp.ndarray):
+    return U @ jnp.diag(jnp.sqrt(jnp.maximum(lam, 0.0)))
 
-# @jax.jit
-def rotate_rows(A: jnp.ndarray, i: int, j: int, c: float, s: float) -> jnp.ndarray:
-    """Apply a single Givens to rows i and j of A (row-rotation)."""
-    ri, rj = A[i], A[j]
-    new_i = c * ri + s * rj
-    new_j = -s * ri + c * rj
-    A = A.at[i].set(new_i)
-    A = A.at[j].set(new_j)
-    return A
+# --- core: rank-1 update in fixed (M+1)-dim space ---
+def _rank1_update_smallspace(U: jnp.ndarray, lam: jnp.ndarray, w: jnp.ndarray, sign: float,
+                             eps: float = 1e-12):
+    """
+    A = U diag(lam) U^T  ->  A' = A + sign * w w^T
+    Returns (U_new, lam_new) with same column count M as U.
+    """
+    D, M = U.shape
 
-# @partial(jax.jit, static_argnames=("reverse",))
-def apply_row_givens_sequence_signed(
-    A: jnp.ndarray, c: jnp.ndarray, s: jnp.ndarray, *, reverse: bool = False
-) -> jnp.ndarray:
-    M = s.shape[0]
+    # Decompose w = U u + r, r ⟂ span(U)
+    u = U.T @ w                                 # (M,)
+    r = w - U @ u                               # (D,)
+    rn = jnp.linalg.norm(r)
+    rhat = r / (rn + eps)                       # safe: if rn=0, rhat=0
 
-    def body(k, A_):
-        idx = jnp.where(reverse, M - 1 - k, k)
-        sign = jnp.where(reverse, -1.0, +1.0)
-        return rotate_rows(A_, 0, idx + 1, c[idx], sign * s[idx])
+    # Always augment to M+1 (static shape)
+    U_aug = jnp.concatenate([U, rhat[:, None]], axis=1)     # (D, M+1)
+    z     = jnp.concatenate([u, jnp.array([rn])], axis=0)   # (M+1,)
+    diag  = jnp.concatenate([lam, jnp.array([0.0])], axis=0)# (M+1,)
 
-    return jax.lax.fori_loop(0, M, body, A)
+    # Small (M+1)x(M+1) update
+    K = jnp.diag(diag) + sign * jnp.outer(z, z)             # symmetric
+    evals, evecs = jnp.linalg.eigh(K)                        # ascending
+    idx = jnp.argsort(evals)[::-1]                           # descending
+    evals = jnp.maximum(evals[idx], 0.0)
+    evecs = evecs[:, idx]
 
+    # Keep top M and map back
+    evals_M = evals[:M]
+    evecs_M = evecs[:, :M]                                   # (M+1, M)
+    U_new = U_aug @ evecs_M                                  # (D, M)
+    U_new, _ = jnp.linalg.qr(U_new, mode="reduced")          # re-orthonormalize
+    lam_new = evals_M
+    return U_new, lam_new
 
-# @jax.jit
-def givens_from_coeffs(a: jnp.ndarray, eps: float = 1e-12):
-    """Back-solve s_k, c_k from a (requires ||a|| <= 1)."""
-    M = a.shape[0]
-    c = jnp.empty(M, dtype=a.dtype)
-    s = jnp.empty(M, dtype=a.dtype)
+# --- public API ---
+def modify_X(X: jnp.ndarray, w: jnp.ndarray, mode: str = "up"):
+    sign = +1.0 if mode == "up" else -1.0
+    U, lam = _orth_eig_from_X(X)
+    U_new, lam_new = _rank1_update_smallspace(U, lam, w, sign=sign)
+    return _X_from_orth_eig(U_new, lam_new)
 
-    Cprod = 1.0
-    # Python loop is fine here (O(M)); application is jitted.
-    for k in range(M - 1, -1, -1):
-        sk = a[k] / (Cprod + eps)
-        sk = jnp.clip(sk, -1.0, 1.0)
-        ck = jnp.sqrt(jnp.maximum(0.0, 1.0 - sk * sk))
-        s = s.at[k].set(sk)
-        c = c.at[k].set(ck)
-        Cprod = Cprod * ck
-    return c, s
+def batch_modify_X(X: jnp.ndarray, W: jnp.ndarray, mode: str = "up"):
+    sign = +1.0 if mode == "up" else -1.0
+    U, lam = _orth_eig_from_X(X)
+    Wflat = W.reshape(-1, W.shape[-1])
 
+    def f(carry, w_i):
+        Uc, lc = carry
+        Un, ln = _rank1_update_smallspace(Uc, lc, w_i, sign=sign)
+        return (Un, ln), None
 
-# ---------- public API ----------
-
-def _rotations_core(X: jnp.ndarray, w: jnp.ndarray, *, reverse: bool, tol: float = 1e-8):
-    """Shared core for both downdate and update."""
-    a, *_ = jnp.linalg.lstsq(X, w, rcond=None)
-    # Optional checks (kept commented to mirror your code)
-    # res = jnp.linalg.norm(X @ a - w)
-    # if res > tol: raise ValueError(...)
-    # if jnp.linalg.norm(a) > 1.0 + 1e-10: raise ValueError(...)
-    A = stack_zero_then_XT(X)
-    c, s = givens_from_coeffs(a)
-    GA = apply_row_givens_sequence_signed(A, c, s, reverse=reverse)
-    return GA[1:].T
-
-def rotations_for_w_down(X: jnp.ndarray, w: jnp.ndarray, tol: float = 1e-8):
-    """DOWndate: X -> X~ such that X~X~^T ≈ A - w w^T."""
-    return _rotations_core(X, w, reverse=False, tol=tol)
+    (U_fin, lam_fin), _ = jax.lax.scan(f, (U, lam), Wflat)
+    return _X_from_orth_eig(U_fin, lam_fin)
 
 
-def rotations_for_w_up(X: jnp.ndarray, w: jnp.ndarray, tol: float = 1e-8):
-    """UPdate: X -> X^ such that X^X^T ≈ A + w w^T."""
-    return _rotations_core(X, w, reverse=True, tol=tol)
-
-@partial(jax.jit, static_argnames=("mode",))
-def apply_rotations(WTp_dense, X, *, mode: str = "down"):
-    steps = WTp_dense.reshape(-1, WTp_dense.shape[-1])  # (K, D)
-    is_update = (mode == "up")
-
-    def body(i, X_):
-        return jax.lax.cond(
-            is_update,
-            lambda Xk: rotations_for_w_up(Xk, steps[i]),
-            lambda Xk: rotations_for_w_down(Xk, steps[i]),
-            X_,
-        )
-
-    return jax.lax.fori_loop(0, steps.shape[0], body, X)
 
 
 def lanczos_tridiag(matvec, v0, m):
@@ -205,20 +190,18 @@ if __name__ == '__main__':
 
     v0 = jax.random.normal(key, (D,))
 
-    Q, T = lanczos_tridiag(GGN_full, v0, M)
-    # Tsqrt = jnp.linalg.cholesky(T + 1e-6*jnp.eye(len(T)))
-    Tsqrt = Msqrtsym(T, tol=1e-6)
+    Q, T = lanczos_tridiag(GGN_full, v0, M)      # ! full
+    # Q, T = lanczos_tridiag(GGN, v0, M)      # ! base
+    Tsqrt = jnp.linalg.cholesky(T + 1e-6*jnp.eye(len(T)))
     X = Q @ Tsqrt
-    
-    # # ! DOWNDATE
-    WT_extra_dense = jax.jacfwd(WT_extra)(v0)
-    Xtilde = apply_rotations(WT_extra_dense, X, mode="down")
-    
-    # ! UPDATE BACK -> PROBLEMATIC :((
-    # Xtilde = apply_rotations(WT_extra_dense, Xtilde, mode="up")
-    
-    # ! RECONSTRUCT
-    GGN_hat = Xtilde@Xtilde.T
+
+    # Add back EXTRA terms (modified or not)
+    WT_extra_dense = jax.jacfwd(WT_extra)(v0)     # (..., D)
+
+    X_mod = batch_modify_X(X, WT_extra_dense, mode="down")
+    X_mod = batch_modify_X(X_mod, WT_extra_dense, mode="up")
+    # X_mod = batch_modify_X(X, WT_extra_dense, mode="up")
+    GGN_hat = X_mod @ X_mod.T
     
     fig, axs = plt.subplots(2, 3, figsize=(23, 8))
 
@@ -227,14 +210,14 @@ if __name__ == '__main__':
     _end   = 150
 
     # for downdate
-    _GGN_dense      = beta * GGN_dense[_start:_end, _start:_end]
-    _GGN_hat        = beta * GGN_hat[_start:_end, _start:_end]
-    _GGN_full_dense = beta_full * GGN_full_dense[_start:_end, _start:_end]
+    # _GGN_dense      = beta * GGN_dense[_start:_end, _start:_end]
+    # _GGN_hat        = beta * GGN_hat[_start:_end, _start:_end]
+    # _GGN_full_dense = beta_full * GGN_full_dense[_start:_end, _start:_end]
     
     # for update
-    # _GGN_dense      =  GGN_full_dense[_start:_end, _start:_end]
-    # _GGN_hat        =  GGN_hat[_start:_end, _start:_end]
-    # _GGN_full_dense =  GGN_dense[_start:_end, _start:_end]
+    _GGN_dense      =  GGN_full_dense[_start:_end, _start:_end]
+    _GGN_hat        =  GGN_hat[_start:_end, _start:_end]
+    _GGN_full_dense =  GGN_dense[_start:_end, _start:_end]
 
     diff_1 = jnp.abs(_GGN_dense - _GGN_hat)
     diff_2 = jnp.abs(_GGN_dense - _GGN_full_dense)
