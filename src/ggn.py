@@ -3,29 +3,12 @@ import jax
 import jax.numpy as jnp
 from functools import partial
 
-from src.utils import flatten_nn_params
-
-
-def _mask_Z(Z, mask_bool):
-    return jnp.where(mask_bool[(...,) + (None,) * (Z.ndim - 1)],
-                     Z,
-                     jax.lax.stop_gradient(Z))
-
-def _mask_from_indices(M, batch_idx, dtype=jnp.bool_):
-    mask = jnp.zeros((M,), dtype=dtype)
-    return mask.at[batch_idx].set(True)
-
 
 def compute_W_vps(state, Z, model_type, *, 
                   flat_params, unravel_fn, 
-                  full_set_size=None, blockwise=False,
-                  batch_idx=None):
-    
-    if batch_idx is not None:
-        batch_mask = _mask_from_indices(M, jnp.asarray(batch_idx, jnp.int32))
-        Z = _mask_Z(Z, batch_mask)
-    
+                  full_set_size=None, blockwise=False):
     M = Z.shape[0]
+    
     N = full_set_size or M
     scale = jnp.sqrt(N / M)
 
@@ -42,7 +25,8 @@ def compute_W_vps(state, Z, model_type, *,
             c = jnp.exp(-state.params["logvar"]["logvar"])
             return jnp.sqrt(c) * u
         else:
-            p = jax.nn.softmax(f_out); s = jnp.sqrt(p)
+            p = jax.nn.softmax(f_out)
+            s = jnp.sqrt(p)
             return s * u - (jnp.dot(s, u)) * p
 
     def _sqrt_H(f_out, u):
@@ -50,7 +34,8 @@ def compute_W_vps(state, Z, model_type, *,
             c = jnp.exp(-state.params["logvar"]["logvar"])
             return jnp.sqrt(c) * u
         else:
-            p = jax.nn.softmax(f_out); s = jnp.sqrt(p)
+            p = jax.nn.softmax(f_out)
+            s = jnp.sqrt(p)
             return s * u - (jnp.dot(p, u)) * s
 
     def _WT_i(i, v):
@@ -84,6 +69,7 @@ def compute_W_vps(state, Z, model_type, *,
         def body_map(pair):
             i, u_i = pair
             return _W_i(i, u_i)
+        # per_i = jax.lax.map(jax.checkpoint(body_map), (idx, U))
         per_i = jax.lax.map(body_map, (idx, U))
         return scale * per_i.sum(axis=0)
 
@@ -93,14 +79,9 @@ def compute_W_vps(state, Z, model_type, *,
 
 def compute_ggn_vp(state, Z, model_type, *, 
                    flat_params, unravel_fn, 
-                   full_set_size=None,
-                   batch_idx=None):
-    
-    if batch_idx is not None:
-        batch_mask = _mask_from_indices(M, jnp.asarray(batch_idx, jnp.int32))
-        Z = _mask_Z(Z, batch_mask)
-        
+                   full_set_size=None):
     M = Z.shape[0]
+        
     N = full_set_size or M
     scale = (N / M)
     if model_type == "regressor":
@@ -132,6 +113,7 @@ def compute_ggn_vp(state, Z, model_type, *,
             jt = jax.linear_transpose(lin, flat_params)
             jt_h, = jt(hv)
             return acc + jt_h
+        # body = jax.checkpoint(body)
         total = jax.lax.fori_loop(0, M, body, jnp.zeros_like(flat_params))
         return scale * total
 
@@ -144,7 +126,7 @@ def compute_ggn_dense(state, Z, model_type, *, flat_params, unravel_fn, full_set
         if model_type == "regressor":
             return state.apply_fn(p_unr, xi, return_logvar=False)
         else:
-            return state.apply_fn({'params': p_unr}, xi, train=False)
+            return state.apply_fn({'params': p_unr}, xi, train=False, mutable=False)
 
     M = Z.shape[0]
     D = flat_params.shape[0]
@@ -152,7 +134,7 @@ def compute_ggn_dense(state, Z, model_type, *, flat_params, unravel_fn, full_set
 
     def body_fun(i, acc):
         zi = jax.lax.dynamic_index_in_dim(Z, i, keepdims=False)
-        J = jax.jacobian(lambda p: model_fun(p, zi))(flat_params)
+        J = jax.jacobian(lambda p: model_fun(p, zi))(flat_params).squeeze()
         if model_type == "classifier":
             fxi = model_fun(flat_params, zi)
             probs = jax.nn.softmax(fxi)

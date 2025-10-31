@@ -6,17 +6,16 @@ import tensorflow_probability.substrates.jax as tfp
 from src.ggn import compute_ggn_dense, compute_ggn_vp
 from src.utils import flatten_nn_params
 from src.sample import sample
+from src.sampling2 import get_conditional_theta_sampler
 
 
 def compute_curvature_approx(map_state, Z, model_type, alpha, *, 
                              flat_params, unravel_fn, 
                              full_set_size=None,
-                             batch_idx=None
                              ):
     ggn_vp = compute_ggn_vp(map_state, Z, model_type=model_type,
                             flat_params=flat_params, unravel_fn=unravel_fn,
-                            full_set_size=full_set_size,
-                            batch_idx=batch_idx)
+                            full_set_size=full_set_size)
     def curvature_vp(v):
         return ggn_vp(v) + alpha * v
     return curvature_vp
@@ -140,11 +139,15 @@ def predict_lla_scalable(
     key = jax.random.PRNGKey(123) if key is None else key
 
     # Draw parameter-space samples
-    w_samples = sample(
-        map_state, Z, D, alpha=alpha, key=key, model_type=model_type,
-        num_samples=num_samples, full_set_size=full_set_size,
-        flat_params=flat_params, unravel_fn=unravel_fn,
-    )
+    # w_samples = sample(
+    #     map_state, Z, D, alpha=alpha, key=key, model_type=model_type,
+    #     num_samples=num_samples, full_set_size=full_set_size,
+    #     flat_params=flat_params, unravel_fn=unravel_fn,
+    # )
+    
+    tol = 1e-3
+    sampler = get_conditional_theta_sampler(Z, alpha, full_set_size, map_state, atol=tol, btol=tol, ctol=tol/10.0)
+    w_samples = sampler(key, num_samples=num_samples)
 
     # Forward model at fixed Xnew; linearize once at MAP
     def model_fun(flat_p):

@@ -1,3 +1,4 @@
+import pdb
 import argparse, functools, pathlib, time
 import numpy as np
 
@@ -203,6 +204,7 @@ def eval_dataset_extended(state,
 
         pbar.set_description(f"[NLL {nll:.3f}] [ACC {acc:.3f}]")
 
+    # pdb.set_trace()
     probs  = np.concatenate(all_probs,  axis=0)
     labels = np.concatenate(all_labels, axis=0)
 
@@ -246,9 +248,10 @@ def main():
     batch_size     = map_cfg["batch_size"]
     lr_map         = map_cfg["lr"]
 
-    if args.dataset in ["spiral", "banana"]:
-        train_loader, test_loader, _ = get_toydataloaders(args.dataset, batch_size)
-        train_loader, _, _ = get_toydataloaders(args.dataset, 400)
+    if args.dataset in ["spiral", "banana", "three_moons"]:
+        # train_loader, test_loader, _ = get_toydataloaders(args.dataset, batch_size)
+        # train_loader, _, _ = get_toydataloaders(args.dataset, 16)
+        train_loader, test_loader, _ = get_toydataloaders(args.dataset, 12)
     else:
         train_loader, test_loader, _ = get_dataloaders(args.dataset, batch_size)
     
@@ -264,6 +267,8 @@ def main():
     dummy_input = next(iter(train_loader))[0][:1]
     model, state = build_state(model_cfg, lr_map, dummy_input)
 
+    xtrain = next(iter(train_loader))[0]
+    
     map_ckpt_prefix = f"map_{args.dataset}"
     state = load_checkpoint(
             ckpt_dir=args.ckpt_map,
@@ -286,7 +291,7 @@ def main():
             step=epochs_inducing
         )
 
-    iters = 10
+    iters = 3
     rng = jax.random.PRNGKey(155858)
 
     nlls, accs, bris, cals, times, aurocs = [], [], [], [], [], []
@@ -298,6 +303,7 @@ def main():
             state,
             test_loader,
             Z,
+            # xtrain,
             rng=rng,
             alpha=alpha,
             full_set_size=full_set_size,
@@ -327,6 +333,7 @@ def main():
                 probs,
                 ood_loader,
                 Z,
+                # xtrain,
                 alpha=alpha,
                 rng=rng,
                 full_set_size=full_set_size,

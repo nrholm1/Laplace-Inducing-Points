@@ -14,6 +14,7 @@ import numpy as np
 
 from src.nplot import plot_regression_data, plot_binary_classification_data
 from src.data import JAXDataset, NumpyDataset, get_dataloaders as _get_dataloaders, jax_collate_fn, numpy_collate_fn
+from src.toydata2 import three_moons
 
 
 """DATASETS"""
@@ -184,8 +185,8 @@ def data_mnist_subset_89():
     
 def plot_data(x,y,name,plotf):
     import matplotlib.pyplot as plt
-    from seaborn import set_style
-    set_style('darkgrid')
+    # from seaborn import set_style
+    # set_style('darkgrid')
     plotf(x,y)
     plt.legend()
     plt.title(f"{name} dataset")
@@ -203,6 +204,8 @@ def create_dataset(dataset_name, n, key, noise, split_in_middle=False):
     if dataset_name == 'xor':
         x, y = xor_dataset(n, key, noise)
         plot_data(x,y,dataset_name,plot_binary_classification_data)
+    if dataset_name == 'three_moons':
+        x, y = three_moons(n, key, noise=noise)
     elif dataset_name == 'banana':
         x, y = banana_dataset(n, key, noise)
         plot_data(x,y,dataset_name,plot_binary_classification_data)

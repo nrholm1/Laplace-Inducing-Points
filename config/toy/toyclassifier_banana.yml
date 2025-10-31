@@ -1,25 +1,39 @@
 model:
-  num_h:                 16
-  num_l:                 3
-  num_c:                 2
   name:                  classifier
   type:                  classifier
+  num_h:                 8
+  num_l:                 3
+  num_c:                 2
   seed:                  12345
+
 optimization:
-  full_set_size:         450 # ! remember to set
-  alpha:                 0.025 #0.0025
+  full_set_size:         1280
+  alpha:                 0.005
+
   map:
     batch_size:          32
     epochs:              250
-    lr:                  0.005
+    lr:                  0.001
     seed:                127831678241
+
   ip:
-    m:                   40
+    m:                   32
     batch_size:          64
-    epochs:              300
-    lr:                  0.01
-    mc_samples:          1000
-    seed:                42315531
-    st_samples:          272
-    slq_samples:         1
-    slq_num_matvecs:     40
+
+    epochs:              250
+    lr:                  0.015
+    seed:                1234
+
+    # Used for visualization MC
+    mc_samples:          1_000
+
+    # Fraction of Z used per substep when masking
+    ip_batch_frac:       1.00
+
+    st_samples:          32
+    slq_samples:         32
+    slq_num_matvecs:     16
+
+    alpha_steps_every:     5
+    alpha_steps_burnin:   10
+    alpha_steps_per_call: 10

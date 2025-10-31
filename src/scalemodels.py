@@ -8,46 +8,55 @@ from flax.core.frozen_dict import FrozenDict, freeze
 from src.toymodels import SimpleClassifier
 
 
-'''class LeNet5(nn.Module):
-    """LeNet-5 for MNIST / Fashion-MNIST (~60 k parameters)."""
+class MiniCNN(nn.Module):
+    """Tiny CNN for MNIST/FMNIST (also runs on CIFAR-10).
+    """
+    c1: int = 8
+    c2: int = 16
+    num_classes: int = 10
+    use_bias: bool = True
+    checkpoint: bool = False  # set True to remat convs
+
     @nn.compact
-    def __call__(self, x,  *args, **kwargs):
-        # Ensure shape (batch, 28, 28, 1)
-        if x.ndim == 3:                 # missing batch dim
+    def __call__(self, x, *, train=False):
+        # Accept (B,H,W,1) or (H,W,1); (B,28,28,1) for MNIST, (B,32,32,3) for CIFAR-10
+        if x.ndim == 3:   # missing batch dim
             x = x[None, ...]
-            
-        # Pad to 32×32 to reproduce original LeNet geometry
-        x = jnp.pad(x,                    # N H  W  C
-                    ((0, 0), (2, 2), (2, 2), (0, 0)),
-                    mode="constant")
+        x = x.astype(jnp.float32)
 
-        # C1: 6 × 5×5 conv, valid padding
-        x = nn.Conv(features=6, kernel_size=(5, 5), strides=(1, 1),
-                    padding="VALID")(x)
+        Conv = nn.Conv
+        if self.checkpoint:
+            Conv = nn.remat(nn.Conv)
+
+        # Downsample aggressively with stride-2 convs
+        x = Conv(self.c1, kernel_size=(3,3), strides=(2,2), padding="SAME", use_bias=self.use_bias)(x)  # 28→14 or 32→16
         x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-
-        # C3: 16 × 5×5 conv
-        x = nn.Conv(features=16, kernel_size=(5, 5), strides=(1, 1),
-                    padding="VALID")(x)
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-
-        # Flatten: 16 × 5 × 5 = 400
-        x = x.reshape((x.shape[0], -1))
-
-        # F5: 120-unit fully connected
-        x = nn.Dense(features=120)(x)
+        x = Conv(self.c2, kernel_size=(3,3), strides=(2,2), padding="SAME", use_bias=self.use_bias)(x)  # 14→7 or 16→8
         x = nn.relu(x)
 
-        # F6: 84-unit fully connected
-        x = nn.Dense(features=84)(x)
-        x = nn.relu(x)
+        # Global Average Pooling
+        x = jnp.mean(x, axis=(1, 2))   # (B, c2)
 
-        # Output: 10 logits
-        x = nn.Dense(features=10)(x)
-        return x
-'''
+        # Linear head
+        logits = nn.Dense(self.num_classes, use_bias=True)(x)
+        return logits
+
+
+class MiniMLP(nn.Module):
+    numh: int # number of hidden units per layer
+    numl: int # number of layers
+    numc: int # number of classes
+    
+    @nn.compact
+    def __call__(self, X, *args, **kwargs):
+        # batch_size = X.shape[0]
+        # X = X.reshape(batch_size, -1) # flatten
+        for _ in range(self.numl):
+            X = nn.relu(nn.Dense(features=self.numh)(X))
+        logits = nn.Dense(features=self.numc)(X)
+        return logits
+
+
 
 
 
@@ -226,6 +235,19 @@ def get_model(model_cfg):
     
     if model_name == "LeNet5":
         return LeNet5()
+    elif model_name == "MiniMLP":
+        model = MiniMLP(numh=model_cfg["numh"], 
+                        numl=model_cfg["numl"], 
+                        numc=model_cfg["numc"],
+        )
+        return model
+    elif model_name == "MiniCNN":
+        model = MiniCNN(c1=model_cfg.get("c1", 8), 
+                        c2=model_cfg.get("c2", 16), 
+                        num_classes=10, 
+                        checkpoint=model_cfg.get("checkpoint", False)
+        )
+        return model
     elif model_name == "large_classifier":
         input_shape = tuple(model_cfg["input_shape"])
         num_h = model_cfg["num_h"]

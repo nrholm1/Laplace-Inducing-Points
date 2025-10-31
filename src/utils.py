@@ -1,12 +1,77 @@
+from __future__ import annotations
 import os
+import pdb
 import yaml
 import numpy as np
 import jax
 import jax.numpy as jnp
 from flax.training import checkpoints
+from flax import struct
 import jax.flatten_util
+from typing import Any, Mapping, Optional
 
 is_pd = lambda M: jnp.all(jnp.linalg.eigvals(M) >= 1e-9)
+
+
+
+@struct.dataclass
+class IPConfig:
+    # algo knobs
+    st_samples: int = 256
+    slq_samples: int = 2
+    slq_num_matvecs: int | None = 32
+    ip_batch_frac: float = 0.25  # fraction of inducing points per substep
+
+    # execution mode + model (static -> avoid recompiles when captured)
+    scalable: bool = struct.field(pytree_node=False, default=True)
+    model_type: str = struct.field(pytree_node=False, default="regressor")
+
+    # interleaved alpha tuning
+    alpha_steps_every: int = 5
+    alpha_steps_burnin: int = 20
+    alpha_steps_per_call: int = 1
+
+
+def _to_int(x: Any) -> int:
+    if isinstance(x, int):
+        return x
+    # handle strings like "1_000"
+    return int(str(x).replace("_", ""))
+
+def _to_float(x: Any) -> float:
+    if isinstance(x, (float, int)):
+        return float(x)
+    return float(str(x).replace("_", ""))
+
+def _to_opt_int(x: Any) -> Optional[int]:
+    if x is None:
+        return None
+    return _to_int(x)
+
+def ip_config_from_dict(
+    d: Mapping[str, Any],
+    *,
+    model_type: str,
+    scalable: bool,
+) -> IPConfig:
+    """
+    Build an IPConfig PyTree from a YAML-loaded dict
+    Unknown keys are ignored; sensible defaults are applied.
+    """
+    return IPConfig(
+        st_samples          = _to_int(d.get("st_samples", IPConfig.st_samples)),
+        slq_samples         = _to_int(d.get("slq_samples", IPConfig.slq_samples)),
+        slq_num_matvecs     = _to_opt_int(d.get("slq_num_matvecs", IPConfig.slq_num_matvecs)),
+        ip_batch_frac       = _to_float(d.get("ip_batch_frac", IPConfig.ip_batch_frac)),
+        scalable            = bool(d.get("scalable", scalable)),
+        model_type          = model_type,
+        alpha_steps_every   = _to_int(d.get("alpha_steps_every", IPConfig.alpha_steps_every)),
+        alpha_steps_burnin  = _to_int(d.get("alpha_steps_burnin", IPConfig.alpha_steps_burnin)),
+        alpha_steps_per_call= _to_int(d.get("alpha_steps_per_call", IPConfig.alpha_steps_per_call)),
+    )
+
+
+
 
 
 def flatten_nn_params(params):
@@ -93,3 +158,11 @@ def print_options(args):
     print('# Options')
     for key, value in sorted(vars(args).items()):
         print(key, '=', value)
+        
+def print_dict(d, indent=0):
+    for key, value in d.items():
+        if isinstance(value, dict):
+            print('  ' * indent + str(key) + ': ')
+            print_dict(value, indent+1)
+        else:
+            print('  ' * indent + str(key) + ': ' + str(value))
